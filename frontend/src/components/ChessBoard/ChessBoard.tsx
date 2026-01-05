@@ -95,7 +95,7 @@ export function ChessBoard({
 
     // If clicking a legal destination, make the move
     if (legalMoves.includes(square)) {
-      const success = onMove(selectedSquare, square);
+      onMove(selectedSquare, square);
       setSelectedSquare(null);
       return;
     }
@@ -123,7 +123,7 @@ export function ChessBoard({
   }, [onMove]);
 
   // Clear selection when position changes (e.g., navigating through game)
-  const onPieceDragBegin = useCallback((_piece: string, sourceSquare: Square) => {
+  const onPieceDragBegin = useCallback((_piece: string, _sourceSquare: Square) => {
     setSelectedSquare(null);
   }, []);
 

@@ -82,7 +82,7 @@ export function GameReport({ analysis, onMoveClick }: GameReportProps) {
           <h4 className="text-sm font-medium text-gray-600">Moves</h4>
           <div className="max-h-48 overflow-y-auto">
             <div className="flex flex-wrap gap-1 text-sm font-mono">
-              {analysis.analyzed_moves.map((move, i) => {
+              {analysis.analyzed_moves.map((move) => {
                 const isWhite = move.ply % 2 === 1;
                 const moveNum = Math.ceil(move.ply / 2);
                 const symbol = CLASSIFICATION_SYMBOLS[move.classification];

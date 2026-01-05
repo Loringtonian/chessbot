@@ -63,7 +63,7 @@ export function useAnalysisCache(
   });
 
   const abortControllerRef = useRef<AbortController | null>(null);
-  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastFetchedFenRef = useRef<string | null>(null);
 
   // Cleanup on unmount
