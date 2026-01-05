@@ -1,5 +1,12 @@
-"""Chess coach service that orchestrates Stockfish + Claude."""
+"""Chess coach service that orchestrates Stockfish + Claude.
 
+Uses a two-tier LLM architecture:
+- Opus 4.5: Background pre-analysis when position changes
+- Haiku 4.5: Fast user-facing responses using cached analysis
+"""
+
+import asyncio
+import logging
 from typing import Optional
 
 from ..models.chess import (
@@ -8,20 +15,40 @@ from ..models.chess import (
     ChatRequest,
     ChatResponse,
     PositionContext,
+    NeighborAnalysis,
+    Evaluation,
+    GameMove,
 )
 from .stockfish_service import StockfishService, get_stockfish_service
 from .claude_service import ClaudeService, get_claude_service
 from .position_analyzer import PositionAnalyzer, get_position_analyzer
+from .cache_service import get_cache_service, AnalysisCacheService
+from .analysis_cache import (
+    PositionAnalysisCache,
+    CachedAnalysis,
+    get_analysis_cache,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class CoachService:
-    """Orchestrates Stockfish analysis with Claude explanations."""
+    """Orchestrates Stockfish analysis with Claude explanations.
+
+    Uses a two-tier LLM architecture:
+    - Opus 4.5: Runs background analysis when position changes
+    - Haiku 4.5: Provides fast user responses using cached Opus analysis
+
+    Stockfish is the source of truth for evaluation. Opus interprets
+    the pre-computed Stockfish facts, it does not independently analyze.
+    """
 
     def __init__(
         self,
         stockfish: Optional[StockfishService] = None,
         claude: Optional[ClaudeService] = None,
         position_analyzer: Optional[PositionAnalyzer] = None,
+        cache: Optional[PositionAnalysisCache] = None,
     ):
         """Initialize the coach service.
 
@@ -29,10 +56,12 @@ class CoachService:
             stockfish: Stockfish service instance.
             claude: Claude service instance.
             position_analyzer: Position analyzer service instance.
+            cache: Analysis cache for Opus pre-computed results.
         """
         self._stockfish = stockfish
         self._claude = claude
         self._position_analyzer = position_analyzer
+        self._cache = cache
 
     @property
     def stockfish(self) -> StockfishService:
@@ -55,6 +84,13 @@ class CoachService:
             self._position_analyzer = get_position_analyzer()
         return self._position_analyzer
 
+    @property
+    def cache(self) -> PositionAnalysisCache:
+        """Get analysis cache, lazily initialized."""
+        if self._cache is None:
+            self._cache = get_analysis_cache()
+        return self._cache
+
     def _build_context(
         self,
         fen: str,
@@ -64,6 +100,7 @@ class CoachService:
         current_ply: int | None = None,
         total_moves: int | None = None,
         include_features: bool = True,
+        neighbor_analyses: list[NeighborAnalysis] | None = None,
     ) -> PositionContext:
         """Build position context from analysis results.
 
@@ -75,6 +112,7 @@ class CoachService:
             current_ply: Current position in game for loaded games.
             total_moves: Total moves in a loaded game.
             include_features: Whether to include rich position features.
+            neighbor_analyses: Analysis of neighboring positions for context.
 
         Returns:
             PositionContext with all analysis data.
@@ -111,7 +149,183 @@ class CoachService:
             current_ply=current_ply,
             total_moves=total_moves,
             position_features=position_features,
+            neighbor_analyses=neighbor_analyses or [],
         )
+
+    def _get_neighbor_analyses(
+        self,
+        move_history: list[str],
+        current_ply: int,
+        moves: list[GameMove] | None = None,
+        look_behind: int = 2,
+        look_ahead: int = 1,
+    ) -> list[NeighborAnalysis]:
+        """Get cached analyses for neighboring positions.
+
+        Args:
+            move_history: Full game move history (SAN notation).
+            current_ply: Current position in game.
+            moves: Pre-parsed game moves with FENs (optional, for faster lookup).
+            look_behind: Number of previous positions to include.
+            look_ahead: Number of future positions to include.
+
+        Returns:
+            List of NeighborAnalysis objects for cached positions.
+        """
+        cache = get_cache_service()
+        neighbors = []
+
+        # This requires the moves with FENs - if not provided, we can't look up neighbors
+        if not moves:
+            return neighbors
+
+        # Look behind (previous positions)
+        for i in range(1, look_behind + 1):
+            ply = current_ply - i
+            if ply > 0 and ply <= len(moves):
+                move = moves[ply - 1]
+                cached = cache.get(move.fen)
+                if cached:
+                    neighbors.append(NeighborAnalysis(
+                        fen=move.fen,
+                        ply=ply,
+                        move_played=move.san,
+                        evaluation=cached.evaluation,
+                        best_move=cached.best_move,
+                        best_move_san=cached.best_move_san,
+                        is_before=True,
+                    ))
+
+        # Look ahead (future positions)
+        for i in range(1, look_ahead + 1):
+            ply = current_ply + i
+            if ply <= len(moves):
+                move = moves[ply - 1]
+                cached = cache.get(move.fen)
+                if cached:
+                    neighbors.append(NeighborAnalysis(
+                        fen=move.fen,
+                        ply=ply,
+                        move_played=move.san,
+                        evaluation=cached.evaluation,
+                        best_move=cached.best_move,
+                        best_move_san=cached.best_move_san,
+                        is_before=False,
+                    ))
+
+        return neighbors
+
+    # -------------------------------------------------------------------------
+    # Two-tier LLM architecture methods
+    # -------------------------------------------------------------------------
+
+    async def on_position_change(
+        self,
+        fen: str,
+        move_history: list[str] | None = None,
+        last_move: str | None = None,
+        current_ply: int | None = None,
+        total_moves: int | None = None,
+    ) -> None:
+        """Trigger background Opus analysis when position changes.
+
+        Called by the frontend when user navigates to a new position.
+        Stockfish provides ground truth evaluation, Opus interprets it.
+
+        Args:
+            fen: New position in FEN notation.
+            move_history: Full game move history.
+            last_move: Last move played to reach this position.
+            current_ply: Current position in game (for loaded games).
+            total_moves: Total moves in the loaded game.
+        """
+        # Skip if already cached or being analyzed
+        if self.cache.get(fen) or self.cache.is_analyzing(fen):
+            return
+
+        # Mark as analyzing to prevent duplicate work
+        self.cache.mark_analyzing(fen)
+
+        # Fire-and-forget: run analysis in background
+        asyncio.create_task(
+            self._analyze_position_background(
+                fen=fen,
+                move_history=move_history,
+                last_move=last_move,
+                current_ply=current_ply,
+                total_moves=total_moves,
+            )
+        )
+
+    async def _analyze_position_background(
+        self,
+        fen: str,
+        move_history: list[str] | None = None,
+        last_move: str | None = None,
+        current_ply: int | None = None,
+        total_moves: int | None = None,
+    ) -> None:
+        """Background task: Opus generates strategic analysis.
+
+        Stockfish is the source of truth. This method:
+        1. Gets Stockfish evaluation (ground truth)
+        2. Extracts position features from python-chess (facts)
+        3. Passes facts to Opus for interpretation (not independent analysis)
+
+        Args:
+            fen: Position in FEN notation.
+            move_history: Full game move history.
+            last_move: Last move played.
+            current_ply: Current position in game.
+            total_moves: Total moves in loaded game.
+        """
+        try:
+            # Run blocking Stockfish analysis in thread pool
+            loop = asyncio.get_event_loop()
+            analysis = await loop.run_in_executor(
+                None,
+                lambda: self.stockfish.analyze(fen, depth=20, multipv=3),
+            )
+
+            # Build context with Stockfish facts + position features
+            context = self._build_context(
+                fen=fen,
+                analysis=analysis,
+                move_history=move_history,
+                last_move=last_move,
+                current_ply=current_ply,
+                total_moves=total_moves,
+            )
+
+            # Opus interprets the pre-computed Stockfish facts
+            # (Opus does NOT analyze the position independently)
+            opus_analysis = await loop.run_in_executor(
+                None,
+                lambda: self.claude.generate_position_analysis(context),
+            )
+
+            # Cache the result
+            self.cache.set(
+                fen,
+                CachedAnalysis(
+                    fen=fen,
+                    opus_analysis=opus_analysis,
+                    stockfish_eval=analysis,
+                    position_features=context.position_features,
+                ),
+            )
+
+            logger.info(f"Background analysis complete for FEN: {fen[:30]}...")
+
+        except Exception as e:
+            logger.error(f"Background analysis failed: {e}")
+            # Cancel pending so waiters don't hang
+            self.cache.cancel_pending(fen)
+
+    def clear_cache_for_new_game(self) -> None:
+        """Clear analysis cache when starting a new game."""
+        self.cache.clear_for_new_game()
+        logger.info("Analysis cache cleared for new game")
 
     def analyze(self, request: AnalyzeRequest) -> AnalyzeResponse:
         """Analyze a position with optional Claude explanation.
@@ -141,8 +355,11 @@ class CoachService:
 
         return analysis
 
-    def chat(self, request: ChatRequest) -> ChatResponse:
-        """Handle a coaching chat message.
+    async def chat(self, request: ChatRequest) -> ChatResponse:
+        """Handle a coaching chat message using two-tier LLM architecture.
+
+        Haiku responds quickly using cached Opus analysis (if available).
+        Stockfish is always the source of truth for evaluation.
 
         Args:
             request: Chat request with question and position.
@@ -150,27 +367,84 @@ class CoachService:
         Returns:
             Chat response with answer and suggested questions.
         """
-        # First get Stockfish analysis for context
-        analysis = self.stockfish.analyze(
-            fen=request.fen,
-            depth=20,
-            multipv=3,
-        )
+        fen = request.fen
+        cached = self.cache.get(fen)
+        opus_analysis: str | None = None
 
-        # Build context with full game info if available
+        if cached:
+            # Use cached Opus analysis - fast path
+            opus_analysis = cached.opus_analysis
+            analysis = cached.stockfish_eval
+            logger.debug(f"Cache hit for FEN: {fen[:30]}...")
+        else:
+            # Cache miss - check if analysis is in progress
+            if self.cache.is_analyzing(fen):
+                # Wait for background analysis (with timeout)
+                logger.debug(f"Waiting for pending analysis: {fen[:30]}...")
+                cached = await self.cache.wait_for_analysis(fen, timeout=15.0)
+                if cached:
+                    opus_analysis = cached.opus_analysis
+                    analysis = cached.stockfish_eval
+                else:
+                    # Timeout - fall back to fresh Stockfish analysis
+                    loop = asyncio.get_event_loop()
+                    analysis = await loop.run_in_executor(
+                        None,
+                        lambda: self.stockfish.analyze(fen, depth=20, multipv=3),
+                    )
+            else:
+                # No cached analysis, no pending - get fresh Stockfish data
+                # Haiku will answer directly from position features
+                loop = asyncio.get_event_loop()
+                analysis = await loop.run_in_executor(
+                    None,
+                    lambda: self.stockfish.analyze(fen, depth=20, multipv=3),
+                )
+                # Trigger background Opus analysis for future questions
+                await self.on_position_change(
+                    fen=fen,
+                    move_history=request.move_history,
+                    last_move=request.last_move,
+                    current_ply=request.current_ply,
+                    total_moves=request.total_moves,
+                )
+
+        # Get neighbor analyses for evaluation trajectory context
+        neighbor_analyses = []
+        if request.current_ply and request.moves:
+            neighbor_analyses = self._get_neighbor_analyses(
+                move_history=request.move_history,
+                current_ply=request.current_ply,
+                moves=request.moves,
+            )
+            if neighbor_analyses:
+                logger.info(
+                    f"Chat context: {len(neighbor_analyses)} neighbor analyses "
+                    f"(ply {request.current_ply}, cache={'hit' if cached else 'miss'})"
+                )
+            else:
+                logger.info(f"Chat: no neighbor analyses available (ply {request.current_ply})")
+
+        # Build context with Stockfish facts + position features + neighbors
         context = self._build_context(
-            fen=request.fen,
+            fen=fen,
             analysis=analysis,
             move_history=request.move_history,
             last_move=request.last_move,
             current_ply=request.current_ply,
             total_moves=request.total_moves,
+            neighbor_analyses=neighbor_analyses,
         )
 
-        # Get Claude's answer
-        answer, suggested = self.claude.answer_question(
-            question=request.question,
-            context=context,
+        # Haiku answers using cached Opus analysis (or directly from facts)
+        loop = asyncio.get_event_loop()
+        answer, suggested = await loop.run_in_executor(
+            None,
+            lambda: self.claude.answer_question(
+                question=request.question,
+                context=context,
+                cached_analysis=opus_analysis,
+            ),
         )
 
         return ChatResponse(

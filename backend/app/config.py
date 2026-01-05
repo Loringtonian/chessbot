@@ -21,9 +21,12 @@ class Settings(BaseSettings):
     stockfish_threads: int = 1
     stockfish_hash_mb: int = 256
 
-    # Claude settings
-    claude_model: str = "claude-sonnet-4-20250514"
+    # Claude settings - Two-tier architecture
+    # Opus for deep background analysis, Haiku for fast user responses
+    claude_model_analysis: str = "claude-opus-4-5-20251101"  # Background analysis
+    claude_model_chat: str = "claude-haiku-4-5-20251001"     # User responses
     claude_max_tokens: int = 1024
+    claude_max_tokens_analysis: int = 2048  # Opus can generate longer analysis
 
     # OpenAI Realtime Voice settings
     openai_realtime_model: str = "gpt-realtime"
@@ -40,6 +43,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"  # Ignore extra env vars from old config versions
 
 
 def get_stockfish_path() -> str:

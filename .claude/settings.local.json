@@ -39,7 +39,12 @@
       "WebFetch(domain:blog.mathieuacher.com)",
       "WebFetch(domain:dev.to)",
       "Bash(wc:*)",
-      "Bash(__NEW_LINE__ echo \"\")"
+      "Bash(__NEW_LINE__ echo \"\")",
+      "Bash(PYTHONPATH=. python -m pytest:*)",
+      "Bash(time curl:*)",
+      "Bash(xargs kill:*)",
+      "Bash(kill:*)",
+      "Bash(npm run dev:*)"
     ]
   }
 }

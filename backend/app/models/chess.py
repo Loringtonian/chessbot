@@ -1,5 +1,6 @@
 """Pydantic models for chess-related data."""
 
+from enum import Enum
 from typing import Literal, Optional, Any
 from pydantic import BaseModel, Field
 
@@ -44,12 +45,24 @@ class ChatRequest(BaseModel):
     last_move: str | None = Field(default=None, description="Last move played in SAN")
     current_ply: int | None = Field(default=None, description="Current position in the game (for loaded games)")
     total_moves: int | None = Field(default=None, description="Total moves in the game")
+    moves: list["GameMove"] | None = Field(default=None, description="Pre-parsed moves with FENs for neighbor lookup")
 
 
 class ChatResponse(BaseModel):
     """Response from the coach."""
     response: str
     suggested_questions: list[str] = Field(default_factory=list)
+
+
+class NeighborAnalysis(BaseModel):
+    """Analysis of a neighboring position (before/after current)."""
+    fen: str
+    ply: int
+    move_played: str | None = None  # Move that led to this position
+    evaluation: Evaluation
+    best_move: str
+    best_move_san: str
+    is_before: bool  # True if this is a previous position, False if future
 
 
 class PositionContext(BaseModel):
@@ -66,6 +79,8 @@ class PositionContext(BaseModel):
     # Rich position features from python-chess analysis (pre-computed facts)
     # Using Any to avoid circular import; actual type is PositionFeatures
     position_features: Optional[Any] = None
+    # Neighbor analyses for game context
+    neighbor_analyses: list[NeighborAnalysis] = Field(default_factory=list)
 
     class Config:
         arbitrary_types_allowed = True
@@ -94,4 +109,101 @@ class PgnLoadResponse(BaseModel):
     result: str | None = None
     moves: list[GameMove] = Field(default_factory=list)
     starting_fen: str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    error: str | None = None
+
+
+# --- Phase 1: Range Analysis Models ---
+
+
+class AnalyzeRangeRequest(BaseModel):
+    """Request to analyze multiple positions with tiered depths."""
+    center_fen: str = Field(..., description="The main position to analyze at full depth")
+    neighbor_fens: list[str] = Field(default_factory=list, description="Neighboring positions to analyze at reduced depth")
+    center_depth: int = Field(default=20, ge=1, le=40, description="Depth for center position")
+    neighbor_depth: int = Field(default=12, ge=1, le=30, description="Depth for neighbor positions")
+
+
+class PositionAnalysis(BaseModel):
+    """Analysis result for a single position in a range request."""
+    fen: str
+    evaluation: Evaluation
+    best_move: str
+    best_move_san: str
+    lines: list[AnalysisLine]
+    depth: int
+    cached: bool = False
+    analysis_time_ms: int = 0
+
+
+class AnalyzeRangeResponse(BaseModel):
+    """Response from analyzing multiple positions."""
+    analyses: dict[str, PositionAnalysis] = Field(default_factory=dict, description="Map of FEN to analysis")
+    cache_hits: int = 0
+    cache_misses: int = 0
+    total_time_ms: int = 0
+
+
+# --- Phase 4: Full Game Analysis Models ---
+
+
+class MoveClassification(str, Enum):
+    """Classification of a move's quality."""
+    BRILLIANT = "brilliant"    # Found a difficult winning move
+    GREAT = "great"            # Best move in a complex position
+    BEST = "best"              # The engine's top choice
+    EXCELLENT = "excellent"    # Top 2, minimal loss (<10 cp)
+    GOOD = "good"              # Top 3-5, slight inaccuracy (<25 cp)
+    INACCURACY = "inaccuracy"  # 25-50 cp loss
+    MISTAKE = "mistake"        # 50-100 cp loss
+    BLUNDER = "blunder"        # >100 cp loss or missed mate
+
+
+class AnalyzedMove(BaseModel):
+    """A move with its analysis."""
+    ply: int
+    san: str
+    uci: str
+    classification: MoveClassification
+    eval_before: Evaluation
+    eval_after: Evaluation
+    best_move: str  # What the engine recommended
+    best_move_san: str
+    centipawn_loss: int | None = None  # None for mate situations
+    is_best: bool = False
+
+
+class GameAnalysisRequest(BaseModel):
+    """Request to analyze an entire game."""
+    pgn: str | None = Field(default=None, description="PGN string to analyze")
+    moves: list[GameMove] | None = Field(default=None, description="Pre-parsed moves to analyze")
+    starting_fen: str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    depth: int = Field(default=18, ge=10, le=30, description="Analysis depth per move")
+
+
+class GameAnalysisStatus(str, Enum):
+    """Status of a game analysis job."""
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class GameAnalysisResponse(BaseModel):
+    """Response from full game analysis."""
+    job_id: str
+    status: GameAnalysisStatus
+    progress: float = 0.0  # 0.0 to 1.0
+    moves_analyzed: int = 0
+    total_moves: int = 0
+    analyzed_moves: list[AnalyzedMove] = Field(default_factory=list)
+    white_accuracy: float | None = None  # Percentage
+    black_accuracy: float | None = None
+    white_blunders: int = 0
+    white_mistakes: int = 0
+    white_inaccuracies: int = 0
+    black_blunders: int = 0
+    black_mistakes: int = 0
+    black_inaccuracies: int = 0
+    summary: str | None = None
     error: str | None = None

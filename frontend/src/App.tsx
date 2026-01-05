@@ -151,9 +151,10 @@ export default function App() {
   const handleSendText = useCallback(
     (question: string) => {
       const lastMoveStr = displayHistory.length > 0 ? displayHistory[displayHistory.length - 1] : undefined;
-      sendTextMessage(question, fen, messages, fullGameMoves, lastMoveStr, loadedGame?.currentPly);
+      // Pass moves with FENs when a game is loaded for neighbor context lookup
+      sendTextMessage(question, fen, messages, fullGameMoves, lastMoveStr, loadedGame?.currentPly, loadedGame?.moves);
     },
-    [sendTextMessage, fen, messages, fullGameMoves, loadedGame?.currentPly, displayHistory]
+    [sendTextMessage, fen, messages, fullGameMoves, loadedGame?.currentPly, loadedGame?.moves, displayHistory]
   );
 
   const handleVoiceConnect = useCallback(() => {

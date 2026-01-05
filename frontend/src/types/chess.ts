@@ -117,3 +117,72 @@ export interface CreateSessionResponse {
 export interface FunctionCallResult {
   result: Record<string, unknown>;
 }
+
+// Range analysis types
+export interface PositionAnalysis {
+  fen: string;
+  evaluation: Evaluation;
+  best_move: string;
+  best_move_san: string;
+  lines: AnalysisLine[];
+  depth: number;
+  cached: boolean;
+  analysis_time_ms: number;
+}
+
+export interface AnalyzeRangeResponse {
+  analyses: Record<string, PositionAnalysis>;
+  cache_hits: number;
+  cache_misses: number;
+  total_time_ms: number;
+}
+
+// Game analysis types
+export type MoveClassification =
+  | 'brilliant'
+  | 'great'
+  | 'best'
+  | 'excellent'
+  | 'good'
+  | 'inaccuracy'
+  | 'mistake'
+  | 'blunder';
+
+export interface AnalyzedMove {
+  ply: number;
+  san: string;
+  uci: string;
+  classification: MoveClassification;
+  eval_before: Evaluation;
+  eval_after: Evaluation;
+  best_move: string;
+  best_move_san: string;
+  centipawn_loss: number | null;
+  is_best: boolean;
+}
+
+export type GameAnalysisStatus =
+  | 'pending'
+  | 'in_progress'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export interface GameAnalysisResponse {
+  job_id: string;
+  status: GameAnalysisStatus;
+  progress: number;
+  moves_analyzed: number;
+  total_moves: number;
+  analyzed_moves: AnalyzedMove[];
+  white_accuracy: number | null;
+  black_accuracy: number | null;
+  white_blunders: number;
+  white_mistakes: number;
+  white_inaccuracies: number;
+  black_blunders: number;
+  black_mistakes: number;
+  black_inaccuracies: number;
+  summary: string | null;
+  error: string | null;
+}
