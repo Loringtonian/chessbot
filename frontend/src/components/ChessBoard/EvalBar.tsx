@@ -29,9 +29,9 @@ export function EvalBar({ evaluation, isLoading }: EvalBarProps) {
   }
 
   return (
-    <div className="flex flex-col items-center gap-1 w-8 flex-shrink-0">
-      {/* Fixed aspect ratio container that matches chess board height */}
-      <div className="w-6 aspect-[1/16] min-h-[200px] bg-gray-800 rounded overflow-hidden flex flex-col-reverse relative">
+    <div className="flex flex-col items-center w-8 flex-shrink-0 self-stretch">
+      {/* Bar container - stretches to match sibling (chess board) height */}
+      <div className="w-6 flex-1 bg-gray-800 rounded overflow-hidden flex flex-col-reverse relative">
         {/* White's portion - grows from bottom */}
         <div
           className="bg-white transition-all duration-300 w-full"
@@ -44,7 +44,7 @@ export function EvalBar({ evaluation, isLoading }: EvalBarProps) {
           </div>
         )}
       </div>
-      <span className={`text-xs font-mono whitespace-nowrap ${isLoading ? 'text-gray-400' : 'text-gray-600'}`}>
+      <span className={`text-xs font-mono whitespace-nowrap mt-1 ${isLoading ? 'text-gray-400' : 'text-gray-600'}`}>
         {isLoading ? '...' : displayText}
       </span>
     </div>

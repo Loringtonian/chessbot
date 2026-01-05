@@ -44,7 +44,8 @@
       "Bash(time curl:*)",
       "Bash(xargs kill:*)",
       "Bash(kill:*)",
-      "Bash(npm run dev:*)"
+      "Bash(npm run dev:*)",
+      "Bash(LOG_LEVEL=INFO uvicorn:*)"
     ]
   }
 }
