@@ -315,8 +315,22 @@ Provide comprehensive grandmaster-level analysis."""
 
         response_text = message.content[0].text
 
+        # Validate response against actual board position
+        from .response_validator import get_response_validator
+
+        validator = get_response_validator()
+        validated_response = validator.validate_and_correct(
+            response=response_text,
+            fen=context.fen,
+            stockfish_eval={
+                'type': context.evaluation.type,
+                'value': context.evaluation.value,
+            },
+            best_move_san=context.best_move_san,
+        )
+
         # No suggested questions with Haiku (keeping responses snappy)
-        return response_text, []
+        return validated_response, []
 
     def explain_position(self, context: PositionContext) -> str:
         """Generate a brief explanation of the current position.
@@ -345,7 +359,23 @@ Explain this position and why the best move is good."""
             messages=[{"role": "user", "content": user_prompt}],
         )
 
-        return message.content[0].text
+        response_text = message.content[0].text
+
+        # Validate Opus output against actual board position
+        from .response_validator import get_response_validator
+
+        validator = get_response_validator()
+        validated_response = validator.validate_and_correct(
+            response=response_text,
+            fen=context.fen,
+            stockfish_eval={
+                'type': context.evaluation.type,
+                'value': context.evaluation.value,
+            },
+            best_move_san=context.best_move_san,
+        )
+
+        return validated_response
 
     def compare_moves(
         self,
@@ -378,7 +408,23 @@ Compare {move1} vs {move2} - which is better and why?"""
             messages=[{"role": "user", "content": user_prompt}],
         )
 
-        return message.content[0].text
+        response_text = message.content[0].text
+
+        # Validate Opus output against actual board position
+        from .response_validator import get_response_validator
+
+        validator = get_response_validator()
+        validated_response = validator.validate_and_correct(
+            response=response_text,
+            fen=context.fen,
+            stockfish_eval={
+                'type': context.evaluation.type,
+                'value': context.evaluation.value,
+            },
+            best_move_san=context.best_move_san,
+        )
+
+        return validated_response
 
 
 # Singleton instance

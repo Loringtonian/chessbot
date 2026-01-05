@@ -149,9 +149,11 @@ class VoiceContextService:
 
         # Build system prompt addition
         system_prompt_addition = self._build_system_prompt_addition(
-            voice_context,
-            opus_analysis,
-            move_quality,
+            fen=fen,
+            voice_context=voice_context,
+            opus_analysis=opus_analysis,
+            move_quality=move_quality,
+            stockfish_data=stockfish_data,
         )
 
         return VoiceSessionContext(
@@ -163,9 +165,11 @@ class VoiceContextService:
 
     def _build_system_prompt_addition(
         self,
+        fen: str,
         voice_context: VoiceContext,
         opus_analysis: Optional[str],
         move_quality: Optional[MoveQualityAnalysis],
+        stockfish_data: Optional[dict] = None,
     ) -> str:
         """Build the text to inject into OpenAI RT system prompt."""
         sections = []
@@ -193,10 +197,27 @@ class VoiceContextService:
                 sections.append(f"\nKey lesson: {move_quality.teaching_point}")
 
         # Opus strategic analysis (summarized for voice)
+        # Validate Opus analysis before including in voice prompt
         if opus_analysis:
-            # Take first paragraph or 500 chars of Opus analysis
-            summary = opus_analysis[:500]
-            if len(opus_analysis) > 500:
+            from .response_validator import get_response_validator
+
+            validator = get_response_validator()
+            # Use actual FEN and Stockfish eval for validation
+            sf_eval = {'type': 'cp', 'value': 0}
+            if stockfish_data:
+                sf_eval = {
+                    'type': stockfish_data.get('eval_type', 'cp'),
+                    'value': stockfish_data.get('eval_value', 0),
+                }
+            validated_opus = validator.validate_and_correct(
+                response=opus_analysis,
+                fen=fen,
+                stockfish_eval=sf_eval,
+            )
+
+            # Take first paragraph or 500 chars of validated analysis
+            summary = validated_opus[:500]
+            if len(validated_opus) > 500:
                 summary = summary.rsplit(".", 1)[0] + "."
             sections.append("\n## STRATEGIC CONTEXT")
             sections.append(summary)
