@@ -32,8 +32,8 @@ CRITICAL RULES:
 Write 3-5 paragraphs of substantive chess analysis."""
 
 
-# System prompt for Haiku (user chat)
-HAIKU_CHAT_PROMPT = """You are a chess coach chatting with a student.
+# Base system prompt for Haiku (user chat) - verbosity instructions added dynamically
+HAIKU_CHAT_BASE = """You are a chess coach chatting with a student.
 
 You have access to:
 1. STOCKFISH DATA (authoritative - this is ground truth)
@@ -44,26 +44,122 @@ CRITICAL HIERARCHY:
 - If grandmaster analysis conflicts with Stockfish data, trust Stockfish
 - The grandmaster analysis explains WHY, Stockfish tells you WHAT
 
-CRITICAL RULES:
-1. Keep responses brief: 1-3 sentences maximum
-2. Use ONLY information from the provided data
-3. Reference specific moves and evaluations from Stockfish
-4. If the question isn't covered by the data, say so briefly
-5. No follow-up questions or suggestions
-6. Be direct and educational
+RULES:
+1. Use ONLY information from the provided data
+2. Reference specific moves and evaluations from Stockfish
+3. If the question isn't covered by the data, say so briefly
+4. Be direct and educational
+5. FOLLOW-THROUGH: If you offer to explain something and the student says "yes" or asks for more, actually provide the explanation using the data available. Never say "I can't do that" after offering to do something.
 
 Never try to analyze the position yourself - only relay the pre-computed facts."""
 
 
-# Fallback prompt when no cached analysis (Haiku uses position features directly)
-HAIKU_FALLBACK_PROMPT = """You are a chess coach. Answer only what is asked.
+# Base fallback prompt - verbosity instructions added dynamically
+HAIKU_FALLBACK_BASE = """You are a chess coach. Answer only what is asked.
 
 Rules:
-- 1-3 sentences max. No more.
-- No follow-up questions or suggestions.
 - Use ONLY the pre-computed position facts provided.
 - If something isn't in the data, say "I don't have information about that."
-- Use concrete move notation (e.g., "Nf3 controls e5")."""
+- Use concrete move notation (e.g., "Nf3 controls e5").
+- FOLLOW-THROUGH: If you offer to explain something and the student says "yes" or asks for more, actually provide the explanation using the data available."""
+
+
+def get_verbosity_instructions(verbosity: int) -> str:
+    """Generate verbosity instructions based on user preference (1-10)."""
+    if verbosity <= 2:
+        return """
+RESPONSE LENGTH: Extremely brief.
+- Maximum 1 sentence per response
+- Just the essential fact or answer
+- No explanations unless explicitly asked
+- Example: "Nf3 is best, attacking the center." """
+    elif verbosity <= 4:
+        return """
+RESPONSE LENGTH: Brief.
+- 1-2 sentences maximum
+- State the key point directly
+- Minimal elaboration
+- Example: "Nf3 is the best move here. It develops a piece while controlling e5 and d4." """
+    elif verbosity <= 6:
+        return """
+RESPONSE LENGTH: Moderate.
+- 2-4 sentences typically
+- Include the main point plus brief context
+- Add one supporting detail when helpful
+- Example: "Nf3 is strongest here, developing your knight to its most active square. It controls key central squares e5 and d4. This also prepares to castle kingside." """
+    elif verbosity <= 8:
+        return """
+RESPONSE LENGTH: Detailed.
+- Full paragraph responses are fine
+- Explain the reasoning behind recommendations
+- Include relevant alternatives and trade-offs
+- Provide context about plans and ideas """
+    else:  # 9-10
+        return """
+RESPONSE LENGTH: Very detailed and thorough.
+- Multiple paragraphs when appropriate
+- Comprehensive explanations with full reasoning
+- Discuss alternatives, plans, and strategic themes
+- Include teaching points and conceptual explanations
+- Feel free to elaborate on interconnected ideas """
+
+
+def get_elo_instructions(user_elo: int) -> str:
+    """Generate instructions based on user's skill level."""
+    if user_elo < 800:
+        return """
+STUDENT LEVEL: Complete beginner (~{elo} ELO)
+- Explain basic concepts when relevant
+- Use simple, clear language
+- Mention fundamental principles (piece development, king safety, controlling center)
+- Don't assume any chess knowledge """.format(elo=user_elo)
+    elif user_elo < 1200:
+        return """
+STUDENT LEVEL: Beginner (~{elo} ELO)
+- Student knows the rules and basic tactics
+- Can explain basic patterns but don't over-explain fundamentals
+- Focus on concrete moves and simple tactics
+- Mention opening principles when relevant """.format(elo=user_elo)
+    elif user_elo < 1600:
+        return """
+STUDENT LEVEL: Intermediate (~{elo} ELO)
+- Student understands basic strategy and tactics
+- Don't explain obvious things like "develop your pieces" or "control the center"
+- Focus on specific move choices and concrete variations
+- Can discuss pawn structures and piece activity """.format(elo=user_elo)
+    elif user_elo < 2000:
+        return """
+STUDENT LEVEL: Advanced intermediate (~{elo} ELO)
+- Student has solid tactical and positional understanding
+- Skip all basic explanations - they know the fundamentals
+- Discuss nuanced positional concepts
+- Can handle complex variations and strategic subtleties
+- Focus on the "why" behind non-obvious moves """.format(elo=user_elo)
+    elif user_elo < 2200:
+        return """
+STUDENT LEVEL: Advanced (~{elo} ELO)
+- Experienced player with strong understanding
+- Discuss positions at a sophisticated level
+- Focus on deep strategic and tactical nuances
+- Can reference advanced concepts without explanation
+- Treat as a peer discussion """.format(elo=user_elo)
+    else:
+        return """
+STUDENT LEVEL: Expert/Master (~{elo} ELO)
+- Very strong player
+- Engage at the highest level of analysis
+- Focus only on the most subtle and critical details
+- Discuss ideas they might not have considered
+- Concise, expert-level discourse """.format(elo=user_elo)
+
+
+def build_chat_prompt(user_elo: int = 1200, verbosity: int = 5, has_cached_analysis: bool = True) -> str:
+    """Build a complete chat prompt with ELO and verbosity customization."""
+    base = HAIKU_CHAT_BASE if has_cached_analysis else HAIKU_FALLBACK_BASE
+    verbosity_inst = get_verbosity_instructions(verbosity)
+    elo_inst = get_elo_instructions(user_elo)
+
+    return f"{base}\n{verbosity_inst}\n{elo_inst}"
 
 
 def fen_to_ascii_board(fen: str) -> str:
@@ -269,6 +365,9 @@ Provide comprehensive grandmaster-level analysis."""
         question: str,
         context: PositionContext,
         cached_analysis: Optional[str] = None,
+        conversation_history: Optional[list[dict]] = None,
+        user_elo: int = 1200,
+        verbosity: int = 5,
     ) -> tuple[str, list[str]]:
         """Answer a user question using Haiku (fast response).
 
@@ -279,6 +378,9 @@ Provide comprehensive grandmaster-level analysis."""
             question: User's question about the position.
             context: Position context with analysis data.
             cached_analysis: Pre-computed Opus analysis (if available).
+            conversation_history: Previous messages in the conversation.
+            user_elo: User's self-reported ELO rating (affects explanation depth).
+            verbosity: Response verbosity 1-10 (1=extremely brief, 10=extremely verbose).
 
         Returns:
             Tuple of (answer, suggested_followup_questions).
@@ -286,31 +388,47 @@ Provide comprehensive grandmaster-level analysis."""
         # Always include fresh Stockfish data (ground truth)
         stockfish_data = self._build_position_prompt(context)
 
+        # Build dynamic system prompt based on user's ELO and verbosity preference
+        has_cached = cached_analysis is not None
+        system_prompt = build_chat_prompt(user_elo, verbosity, has_cached)
+
         if cached_analysis:
             # Haiku with Opus analysis + fresh Stockfish (Stockfish takes priority)
-            user_prompt = f"""## STOCKFISH DATA (Ground Truth - Always Authoritative)
+            context_prompt = f"""## STOCKFISH DATA (Ground Truth - Always Authoritative)
 {stockfish_data}
 
 ## Grandmaster Strategic Analysis (Interprets the Stockfish data above)
-{cached_analysis}
-
-## Student Question
-{question}"""
-            system_prompt = HAIKU_CHAT_PROMPT
+{cached_analysis}"""
         else:
             # Fallback: Haiku answers directly from Stockfish/position features
-            user_prompt = f"""## STOCKFISH DATA (Ground Truth)
-{stockfish_data}
+            context_prompt = f"""## STOCKFISH DATA (Ground Truth)
+{stockfish_data}"""
 
-## Question
-{question}"""
-            system_prompt = HAIKU_FALLBACK_PROMPT
+        # Build messages list with conversation history
+        messages = []
+
+        # First message includes the position context
+        if conversation_history and len(conversation_history) > 0:
+            # Include position context as first user message, then add history
+            first_user_content = f"{context_prompt}\n\n## Student Question\n{conversation_history[0]['content']}"
+            messages.append({"role": "user", "content": first_user_content})
+
+            # Add remaining conversation history
+            for msg in conversation_history[1:]:
+                messages.append({"role": msg["role"], "content": msg["content"]})
+
+            # Add current question
+            messages.append({"role": "user", "content": question})
+        else:
+            # No history - single message with context and question
+            user_prompt = f"{context_prompt}\n\n## Student Question\n{question}"
+            messages.append({"role": "user", "content": user_prompt})
 
         message = self._client.messages.create(
             model=self._model_chat,  # Haiku
             max_tokens=self._max_tokens,
             system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
+            messages=messages,
         )
 
         response_text = message.content[0].text

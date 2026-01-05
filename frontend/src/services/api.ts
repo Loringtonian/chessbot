@@ -47,7 +47,9 @@ export async function chatWithCoach(
   lastMove?: string,
   currentPly?: number,
   conversationHistory?: { role: string; content: string }[],
-  moves?: { ply: number; san: string; uci: string; fen: string }[]
+  moves?: { ply: number; san: string; uci: string; fen: string }[],
+  userElo?: number,
+  verbosity?: number
 ): Promise<ChatResponse> {
   const response = await fetch(`${API_BASE}/chat`, {
     method: 'POST',
@@ -61,6 +63,8 @@ export async function chatWithCoach(
       total_moves: moveHistory.length,
       conversation_history: conversationHistory,
       moves: moves,
+      user_elo: userElo,
+      verbosity: verbosity,
     }),
   });
 

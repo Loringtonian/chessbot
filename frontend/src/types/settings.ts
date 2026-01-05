@@ -7,7 +7,7 @@
 export type GameMode = 'both_sides' | 'play_coach';
 
 export interface GameSettings {
-  /** User's ELO rating (600-3200) - affects feedback tone */
+  /** User's ELO rating (600-3200) - affects feedback sophistication */
   userElo: number;
 
   /** Coach's ELO rating (600-3200) - affects how well coach plays */
@@ -15,12 +15,16 @@ export interface GameSettings {
 
   /** Current game mode */
   gameMode: GameMode;
+
+  /** Response verbosity (1-10): 1 = extremely brief, 10 = extremely verbose */
+  verbosity: number;
 }
 
 export const DEFAULT_SETTINGS: GameSettings = {
   userElo: 1200,
   coachElo: 1500,
   gameMode: 'both_sides',
+  verbosity: 5,
 };
 
 const SETTINGS_KEY = 'chessbot_settings';
@@ -43,6 +47,7 @@ export function loadSettings(): GameSettings {
       userElo: validateElo(parsed.userElo) ? parsed.userElo : DEFAULT_SETTINGS.userElo,
       coachElo: validateElo(parsed.coachElo) ? parsed.coachElo : DEFAULT_SETTINGS.coachElo,
       gameMode: validateGameMode(parsed.gameMode) ? parsed.gameMode : DEFAULT_SETTINGS.gameMode,
+      verbosity: validateVerbosity(parsed.verbosity) ? parsed.verbosity : DEFAULT_SETTINGS.verbosity,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -72,6 +77,24 @@ function validateElo(elo: unknown): elo is number {
  */
 function validateGameMode(mode: unknown): mode is GameMode {
   return mode === 'both_sides' || mode === 'play_coach';
+}
+
+/**
+ * Validate verbosity is in valid range (1-10).
+ */
+function validateVerbosity(verbosity: unknown): verbosity is number {
+  return typeof verbosity === 'number' && verbosity >= 1 && verbosity <= 10;
+}
+
+/**
+ * Get a human-readable label for a verbosity level.
+ */
+export function getVerbosityLabel(verbosity: number): string {
+  if (verbosity <= 2) return 'Extremely Brief';
+  if (verbosity <= 4) return 'Brief';
+  if (verbosity <= 6) return 'Moderate';
+  if (verbosity <= 8) return 'Detailed';
+  return 'Very Detailed';
 }
 
 /**

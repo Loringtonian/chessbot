@@ -437,6 +437,12 @@ class CoachService:
         )
 
         # Haiku answers using cached Opus analysis (or directly from facts)
+        # Include conversation history for context
+        conversation_history = [
+            {"role": msg.role, "content": msg.content}
+            for msg in (request.conversation_history or [])
+        ]
+
         loop = asyncio.get_event_loop()
         answer, suggested = await loop.run_in_executor(
             None,
@@ -444,6 +450,9 @@ class CoachService:
                 question=request.question,
                 context=context,
                 cached_analysis=opus_analysis,
+                conversation_history=conversation_history,
+                user_elo=request.user_elo,
+                verbosity=request.verbosity,
             ),
         )
 

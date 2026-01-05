@@ -37,6 +37,12 @@ class AnalyzeResponse(BaseModel):
     explanation: str | None = None
 
 
+class ConversationMessage(BaseModel):
+    """A message in the conversation history."""
+    role: str = Field(..., description="Either 'user' or 'assistant'")
+    content: str = Field(..., description="Message content")
+
+
 class ChatRequest(BaseModel):
     """Request to chat with the coach."""
     fen: str = Field(..., description="Current position in FEN notation")
@@ -46,6 +52,9 @@ class ChatRequest(BaseModel):
     current_ply: int | None = Field(default=None, description="Current position in the game (for loaded games)")
     total_moves: int | None = Field(default=None, description="Total moves in the game")
     moves: list["GameMove"] | None = Field(default=None, description="Pre-parsed moves with FENs for neighbor lookup")
+    conversation_history: list[ConversationMessage] = Field(default_factory=list, description="Previous messages in the conversation")
+    user_elo: int = Field(default=1200, ge=600, le=3200, description="User's self-reported ELO rating")
+    verbosity: int = Field(default=5, ge=1, le=10, description="Response verbosity: 1=extremely brief, 10=extremely verbose")
 
 
 class ChatResponse(BaseModel):

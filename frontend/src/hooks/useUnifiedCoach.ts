@@ -6,6 +6,7 @@
 import { useState, useCallback } from 'react';
 import { chatWithCoach } from '../services/api';
 import type { UnifiedMessage, GameMove } from '../types/chess';
+import type { GameSettings } from '../types/settings';
 
 export interface UseUnifiedCoachReturn {
   isLoading: boolean;
@@ -30,9 +31,10 @@ function generateId(): string {
 
 interface UseUnifiedCoachOptions {
   onMessage: (message: UnifiedMessage) => void;
+  settings: GameSettings;
 }
 
-export function useUnifiedCoach({ onMessage }: UseUnifiedCoachOptions): UseUnifiedCoachReturn {
+export function useUnifiedCoach({ onMessage, settings }: UseUnifiedCoachOptions): UseUnifiedCoachReturn {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([
@@ -79,7 +81,9 @@ export function useUnifiedCoach({ onMessage }: UseUnifiedCoachOptions): UseUnifi
           lastMove,
           currentPly,
           conversationHistory,
-          moves
+          moves,
+          settings.userElo,
+          settings.verbosity
         );
 
         // Add assistant message

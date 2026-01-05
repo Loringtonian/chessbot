@@ -61,7 +61,7 @@ export default function App() {
     isLoading: isTextLoading,
     sendMessage: sendTextMessage,
     suggestedQuestions,
-  } = useUnifiedCoach({ onMessage: addFullMessage });
+  } = useUnifiedCoach({ onMessage: addFullMessage, settings });
 
   // Voice hook
   const {

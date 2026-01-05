@@ -4,7 +4,7 @@
 
 import { useState, useEffect } from 'react';
 import type { GameSettings } from '../types/settings';
-import { getEloLabel } from '../types/settings';
+import { getEloLabel, getVerbosityLabel } from '../types/settings';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -16,25 +16,28 @@ interface SettingsModalProps {
 export function SettingsModal({ isOpen, onClose, settings, onSave }: SettingsModalProps) {
   const [userElo, setUserElo] = useState(settings.userElo);
   const [coachElo, setCoachElo] = useState(settings.coachElo);
+  const [verbosity, setVerbosity] = useState(settings.verbosity);
 
   // Sync with props when modal opens
   useEffect(() => {
     if (isOpen) {
       setUserElo(settings.userElo);
       setCoachElo(settings.coachElo);
+      setVerbosity(settings.verbosity);
     }
   }, [isOpen, settings]);
 
   if (!isOpen) return null;
 
   const handleSave = () => {
-    onSave({ userElo, coachElo });
+    onSave({ userElo, coachElo, verbosity });
     onClose();
   };
 
   const handleCancel = () => {
     setUserElo(settings.userElo);
     setCoachElo(settings.coachElo);
+    setVerbosity(settings.verbosity);
     onClose();
   };
 
@@ -107,6 +110,35 @@ export function SettingsModal({ isOpen, onClose, settings, onSave }: SettingsMod
           </div>
           <p className="text-xs text-gray-500 mt-2">
             How well the coach plays in "vs Coach" mode
+          </p>
+        </div>
+
+        {/* Verbosity */}
+        <div className="mb-6">
+          <div className="flex justify-between items-center mb-2">
+            <label className="text-sm font-medium text-gray-700">
+              Response Verbosity
+            </label>
+            <span className="text-sm text-gray-500">
+              {verbosity} - {getVerbosityLabel(verbosity)}
+            </span>
+          </div>
+          <input
+            type="range"
+            min={1}
+            max={10}
+            step={1}
+            value={verbosity}
+            onChange={(e) => setVerbosity(Number(e.target.value))}
+            className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-purple-600"
+          />
+          <div className="flex justify-between text-xs text-gray-400 mt-1">
+            <span>Brief</span>
+            <span>Moderate</span>
+            <span>Detailed</span>
+          </div>
+          <p className="text-xs text-gray-500 mt-2">
+            How detailed the coach's explanations should be
           </p>
         </div>
 
