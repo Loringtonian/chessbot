@@ -23,12 +23,29 @@ from ...models.chess import (
     GameAnalysisResponse,
     GameAnalysisStatus,
 )
+from pydantic import BaseModel, Field
+
 from ...services.coach_service import get_coach_service
-from ...services.stockfish_service import get_stockfish_service
+from ...services.stockfish_service import get_stockfish_service, elo_to_skill_level
 from ...services.cache_service import get_cache_service
 from ...services.background_analyzer import get_background_analyzer
 from ...services.game_analyzer import get_game_analyzer
 from ...services import game_logger
+
+
+# Request/Response models for coach endpoints
+class CoachMoveRequest(BaseModel):
+    """Request for getting the coach's move at a specified ELO strength."""
+    fen: str = Field(..., description="Current position in FEN notation")
+    coach_elo: int = Field(default=1500, ge=600, le=3200, description="Coach ELO rating (600-3200)")
+
+
+class CoachMoveResponse(BaseModel):
+    """Response containing the coach's move."""
+    move_uci: str = Field(..., description="Move in UCI notation (e.g., 'e2e4')")
+    move_san: str = Field(..., description="Move in algebraic notation (e.g., 'e4')")
+    fen_after: str = Field(..., description="Position after the move")
+    skill_level: int = Field(..., description="Stockfish skill level used (0-20)")
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["analysis"])
@@ -67,6 +84,57 @@ async def analyze_position(request: AnalyzeRequest) -> AnalyzeResponse:
         raise HTTPException(
             status_code=500,
             detail=f"Analysis failed: {e}",
+        )
+
+
+@router.post("/coach-move", response_model=CoachMoveResponse)
+async def get_coach_move(request: CoachMoveRequest) -> CoachMoveResponse:
+    """Get the coach's response move at a specified ELO strength.
+
+    The coach (Stockfish) will play at a skill level corresponding to the
+    specified ELO rating. Lower ELO = weaker, more human-like play.
+
+    This is used in "Play Against Coach" mode where the user plays White
+    and the coach automatically responds as Black.
+    """
+    try:
+        import chess
+
+        stockfish = get_stockfish_service()
+        skill_level = elo_to_skill_level(request.coach_elo)
+
+        # Get move at specified skill level (fast response - 0.3s max)
+        move_uci, move_san = stockfish.get_move_at_skill_level(
+            fen=request.fen,
+            skill_level=skill_level,
+            time_limit=0.3,
+        )
+
+        # Calculate resulting position
+        board = chess.Board(request.fen)
+        board.push(chess.Move.from_uci(move_uci))
+
+        logger.info(
+            f"Coach move: {move_san} (ELO {request.coach_elo} -> skill {skill_level})"
+        )
+
+        return CoachMoveResponse(
+            move_uci=move_uci,
+            move_san=move_san,
+            fen_after=board.fen(),
+            skill_level=skill_level,
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid position or no legal moves: {e}",
+        )
+    except Exception as e:
+        logger.error(f"Coach move failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get coach move: {e}",
         )
 
 
@@ -727,6 +795,97 @@ async def get_voice_system_prompt(
     except Exception as e:
         logger.error(f"Failed to get voice system prompt: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get voice system prompt: {e}")
+
+
+# Request/Response models for user move analysis
+class AnalyzeUserMoveRequest(BaseModel):
+    """Request for analyzing a user's move with coaching interjection."""
+    fen_before: str = Field(..., description="Position before the move")
+    move_san: str = Field(..., description="Move in SAN notation")
+    move_uci: str = Field(..., description="Move in UCI notation")
+    fen_after: str = Field(..., description="Position after the move")
+    ply: int = Field(default=1, ge=1, description="Move number (half-moves)")
+    user_elo: int = Field(default=1200, ge=600, le=3200, description="User's ELO rating")
+
+
+class InterjectionResponse(BaseModel):
+    """Response containing coaching interjection if warranted."""
+    has_interjection: bool = Field(..., description="Whether feedback is warranted")
+    interjection_type: Optional[str] = Field(None, description="praise, inaccuracy, mistake, or blunder")
+    message: Optional[str] = Field(None, description="Full coaching message for chat")
+    short_message: Optional[str] = Field(None, description="Brief message for voice")
+    should_speak: bool = Field(default=False, description="Whether voice should speak this")
+    priority: int = Field(default=3, description="1=high, 2=medium, 3=low")
+
+    # Move details
+    move_played: str = Field(..., description="The move that was played")
+    move_rank: int = Field(..., description="Rank vs Stockfish (0 if not in top 5)")
+    classification: str = Field(..., description="Move classification")
+    centipawn_loss: Optional[int] = Field(None, description="Centipawn loss")
+    best_move: Optional[str] = Field(None, description="Best move according to Stockfish")
+    teaching_point: Optional[str] = Field(None, description="Key lesson from this move")
+
+
+@router.post("/analyze-user-move", response_model=InterjectionResponse)
+async def analyze_user_move(request: AnalyzeUserMoveRequest) -> InterjectionResponse:
+    """Analyze a user's move and generate coaching interjection if warranted.
+
+    This endpoint is called after each user move in "Play Against Coach" mode.
+    It determines whether the coach should interject with feedback:
+    - Praise for top 3 moves
+    - Corrections for inaccuracies (25+ cp), mistakes (50+ cp), or blunders (100+ cp)
+
+    The response includes both a full message (for chat) and a short message (for voice).
+    """
+    try:
+        from ...services.interjection_service import get_interjection_service
+
+        service = get_interjection_service()
+
+        analysis, interjection = service.analyze_and_interject(
+            fen_before=request.fen_before,
+            move_san=request.move_san,
+            move_uci=request.move_uci,
+            fen_after=request.fen_after,
+            ply=request.ply,
+            user_elo=request.user_elo,
+        )
+
+        # Get best move for response
+        best_move = None
+        if analysis.stockfish_top_moves:
+            best_move = analysis.stockfish_top_moves[0].move_san
+
+        if interjection:
+            return InterjectionResponse(
+                has_interjection=True,
+                interjection_type=interjection.type.value,
+                message=interjection.message,
+                short_message=interjection.short_message,
+                should_speak=interjection.should_speak,
+                priority=interjection.priority,
+                move_played=analysis.move_played_san,
+                move_rank=analysis.move_rank,
+                classification=analysis.classification.value,
+                centipawn_loss=analysis.centipawn_loss,
+                best_move=best_move,
+                teaching_point=interjection.teaching_point,
+            )
+        else:
+            return InterjectionResponse(
+                has_interjection=False,
+                move_played=analysis.move_played_san,
+                move_rank=analysis.move_rank,
+                classification=analysis.classification.value,
+                centipawn_loss=analysis.centipawn_loss,
+                best_move=best_move,
+            )
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid move: {e}")
+    except Exception as e:
+        logger.error(f"Failed to analyze user move: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to analyze move: {e}")
 
 
 @router.post("/analyze-move")

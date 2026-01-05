@@ -9,6 +9,7 @@ import type {
   AnalyzeRangeResponse,
   GameAnalysisResponse,
 } from '../types/chess';
+import type { CoachMoveResponse, InterjectionResponse } from '../types/settings';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
@@ -181,6 +182,64 @@ export async function getGameAnalysis(jobId: string): Promise<GameAnalysisRespon
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
     throw new Error(error.detail || 'Failed to get game analysis');
+  }
+
+  return response.json();
+}
+
+/**
+ * Get the coach's move at a specified ELO strength.
+ * Used in "vs Coach" mode when it's Black's turn.
+ */
+export async function getCoachMove(
+  fen: string,
+  coachElo: number
+): Promise<CoachMoveResponse> {
+  const response = await fetch(`${API_BASE}/coach-move`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      fen,
+      coach_elo: coachElo,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new Error(error.detail || 'Failed to get coach move');
+  }
+
+  return response.json();
+}
+
+/**
+ * Analyze a user's move and get coaching interjection if warranted.
+ * Called after each user move to determine if feedback is needed.
+ */
+export async function analyzeUserMove(
+  fenBefore: string,
+  moveSan: string,
+  moveUci: string,
+  fenAfter: string,
+  ply: number,
+  userElo: number
+): Promise<InterjectionResponse> {
+  const response = await fetch(`${API_BASE}/analyze-user-move`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      fen_before: fenBefore,
+      move_san: moveSan,
+      move_uci: moveUci,
+      fen_after: fenAfter,
+      ply,
+      user_elo: userElo,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new Error(error.detail || 'Failed to analyze move');
   }
 
   return response.json();

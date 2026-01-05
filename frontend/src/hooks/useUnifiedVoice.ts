@@ -23,6 +23,8 @@ export interface UseUnifiedVoiceReturn {
   updateContext: (fen: string, moveHistory?: string[], currentPly?: number) => void;
   interruptResponse: () => void;
   injectTextMessage: (message: UnifiedMessage) => void;
+  /** Inject a coaching interjection that the voice will speak */
+  injectInterjection: (message: string) => void;
 }
 
 interface RealtimeEvent {
@@ -423,6 +425,29 @@ export function useUnifiedVoice({ onMessage }: UseUnifiedVoiceOptions): UseUnifi
     }
   }, []);
 
+  // Inject a coaching interjection that triggers voice output
+  const injectInterjection = useCallback((message: string) => {
+    if (dataChannelRef.current?.readyState === 'open') {
+      // Add as a system instruction that tells the voice to speak this
+      dataChannelRef.current.send(JSON.stringify({
+        type: 'conversation.item.create',
+        item: {
+          type: 'message',
+          role: 'user',
+          content: [{
+            type: 'input_text',
+            text: `[Coach interjection - speak this naturally] ${message}`,
+          }],
+        },
+      }));
+
+      // Trigger immediate response so the voice speaks
+      dataChannelRef.current.send(JSON.stringify({
+        type: 'response.create',
+      }));
+    }
+  }, []);
+
   return {
     connectionStatus,
     connectionError,
@@ -435,5 +460,6 @@ export function useUnifiedVoice({ onMessage }: UseUnifiedVoiceOptions): UseUnifi
     updateContext,
     interruptResponse,
     injectTextMessage,
+    injectInterjection,
   };
 }

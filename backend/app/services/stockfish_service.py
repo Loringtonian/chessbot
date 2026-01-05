@@ -2,10 +2,37 @@
 
 import chess
 import chess.engine
-from typing import Optional
+from typing import Optional, Tuple
 
 from ..config import get_stockfish_path, get_settings
 from ..models.chess import Evaluation, AnalysisLine, AnalyzeResponse
+
+
+def elo_to_skill_level(elo: int) -> int:
+    """Map ELO rating (600-3200) to Stockfish Skill Level (0-20).
+
+    Approximate mapping based on Stockfish behavior:
+    - Skill 0: ~800 ELO (makes random mistakes)
+    - Skill 10: ~2000 ELO (club player)
+    - Skill 20: ~3200+ ELO (full strength)
+
+    Args:
+        elo: ELO rating between 600 and 3200.
+
+    Returns:
+        Stockfish skill level between 0 and 20.
+    """
+    elo = max(600, min(3200, elo))
+
+    if elo < 1200:
+        # Lower ratings: 600-1200 → skill 0-5
+        return int((elo - 600) / 120)
+    elif elo < 2000:
+        # Mid ratings: 1200-2000 → skill 5-12
+        return int(5 + (elo - 1200) / 114)
+    else:
+        # High ratings: 2000-3200 → skill 12-20
+        return int(12 + (elo - 2000) / 150)
 
 
 class StockfishService:
@@ -148,6 +175,44 @@ class StockfishService:
             raise ValueError("No legal moves in position")
 
         return result.move.uci(), board.san(result.move)
+
+    def get_move_at_skill_level(
+        self,
+        fen: str,
+        skill_level: int = 20,
+        time_limit: float = 1.0,
+    ) -> Tuple[str, str]:
+        """Get a move at a specified skill level (not necessarily the best move).
+
+        At lower skill levels, Stockfish will intentionally make weaker moves.
+
+        Args:
+            fen: Position in FEN notation.
+            skill_level: Stockfish skill level (0-20). 0 = weakest, 20 = strongest.
+            time_limit: Time to think in seconds.
+
+        Returns:
+            Tuple of (uci_move, san_move).
+        """
+        engine = self._ensure_engine()
+        board = chess.Board(fen)
+
+        # Clamp skill level to valid range
+        skill_level = max(0, min(20, skill_level))
+
+        # Temporarily set skill level
+        engine.configure({"Skill Level": skill_level})
+
+        try:
+            result = engine.play(board, chess.engine.Limit(time=time_limit))
+
+            if result.move is None:
+                raise ValueError("No legal moves in position")
+
+            return result.move.uci(), board.san(result.move)
+        finally:
+            # Reset to maximum skill for analysis operations
+            engine.configure({"Skill Level": 20})
 
     def evaluate_move(self, fen: str, move: str, depth: int = 20) -> dict:
         """Evaluate a specific move compared to the best move.
