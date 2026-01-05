@@ -1,0 +1,39 @@
+FROM python:3.12-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download and install Stockfish
+RUN curl -L -o /tmp/stockfish.tar \
+    https://github.com/official-stockfish/Stockfish/releases/download/sf_17/stockfish-ubuntu-x86-64.tar \
+    && cd /tmp \
+    && tar -xf stockfish.tar \
+    && mv stockfish/stockfish-ubuntu-x86-64 /usr/local/bin/stockfish \
+    && chmod +x /usr/local/bin/stockfish \
+    && rm -rf /tmp/stockfish* \
+    && /usr/local/bin/stockfish --help || true
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements and install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Copy frontend static files (built separately)
+COPY --from=frontend /app/dist ./static
+
+# Set environment variables
+ENV STOCKFISH_PATH=/usr/local/bin/stockfish
+ENV PORT=8080
+
+# Expose port
+EXPOSE 8080
+
+# Run the application
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
