@@ -1,0 +1,13 @@
+[Site "Chess.com"]
+[White "Bishop_Of_Milan"]
+[Black "eelsnut"]
+[Result "1-0"]
+[WhiteElo "1293"]
+[BlackElo "1170"]
+[TimeControl "1/259200"]
+1. f4 Nc6 2. Nf3 b6 3. e4 e6 4. c4 Bc5 5. d4 Bb4+ 6. Bd2 d5 7. Bxb4 Nxb4 8. Qa4+
+Bd7 9. Qxb4 dxe4 10. Ne5 Qh4+ 11. g3 Qe7 12. Qxe7+ Nxe7 13. Nxd7 Kxd7 14. Nc3 f5
+15. Ke2 Nc6 16. Rd1 Ne7 17. Bg2 a6 18. d5 Kc8 19. dxe6 Kb8 20. Nxe4 fxe4 21.
+Bxe4 c6 22. Rd7 Ra7 23. Rhd1 Rxd7 24. Rxd7 Re8 25. f5 h6 26. Kf3 Kc8 27. Kf4 g6
+28. f6 g5+ 29. Ke5 Ng8 30. f7 Rf8 31. fxg8=Q Rxg8 32. Kd6 c5 33. Ra7 Rd8+ 34.
+Kc6 Kb8 35. Ra8+ Kxa8 36. Kc7+ Ka7 37. Kxd8 a5 38. e7 a4 39. e8=Q Ka6 40. Qxa4# 1-0
