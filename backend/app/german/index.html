@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Deutsch-Tutor · German Voice Tutor</title>
+<style>
+  :root {
+    --bg: #0e1014; --panel: #171a21; --panel-2: #1f232c;
+    --text: #eef1f6; --muted: #9aa3b2;
+    --accent: #f6c945; --accent-2: #e94b3c; --user: #5aa9ff; --ok: #3ecf8e;
+    --border: #2a2f3a;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: radial-gradient(1200px 600px at 50% -10%, #1a1e27 0%, var(--bg) 60%);
+    color: var(--text);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex; flex-direction: column; align-items: center; min-height: 100%;
+  }
+  header { width: 100%; max-width: 720px; padding: 28px 20px 8px; text-align: center; }
+  .flag { letter-spacing: 2px; font-size: 13px; color: var(--muted); }
+  h1 { margin: 6px 0 2px; font-size: 26px; font-weight: 700; }
+  h1 .gold { color: var(--accent); }
+  .sub { color: var(--muted); font-size: 14px; margin: 0; }
+  main { width: 100%; max-width: 720px; padding: 16px 20px 40px; flex: 1; display: flex; flex-direction: column; gap: 16px; }
+
+  .login { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 320px; margin: 24px auto; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 22px; }
+  .login-title { text-align: center; color: var(--muted); font-size: 14px; letter-spacing: .04em; }
+  .login input { appearance: none; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; color: var(--text); padding: 12px 14px; font-size: 15px; width: 100%; }
+  .login input:focus { outline: none; border-color: var(--accent); }
+
+  .btn { appearance: none; border: none; cursor: pointer; border-radius: 999px; padding: 14px 24px; font-size: 16px; font-weight: 650; color: #1a1205; background: linear-gradient(180deg, #ffd75e, var(--accent)); box-shadow: 0 6px 20px rgba(246,201,69,.22); transition: transform .08s, filter .15s; }
+  .btn:hover { filter: brightness(1.05); }
+  .btn:active { transform: translateY(1px); }
+  .btn:disabled { opacity: .55; cursor: default; }
+  .btn.full { width: 100%; }
+  .btn.live { color: #fff; background: linear-gradient(180deg, #ff6a5c, var(--accent-2)); box-shadow: 0 6px 22px rgba(233,75,60,.3); }
+
+  .controls { display: flex; align-items: center; gap: 14px; justify-content: center; flex-wrap: wrap; }
+  .status { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); transition: background .2s, box-shadow .2s; }
+  .dot.connecting { background: var(--accent); animation: pulse 1s infinite; }
+  .dot.connected, .dot.listening { background: var(--ok); box-shadow: 0 0 0 4px rgba(62,207,142,.15); }
+  .dot.speaking { background: var(--accent); box-shadow: 0 0 0 5px rgba(246,201,69,.18); animation: pulse .8s infinite; }
+  .dot.error { background: var(--accent-2); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+
+  .meter { height: 8px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--border); overflow: hidden; }
+  .meter > i { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, var(--ok), var(--accent)); transition: width .06s linear; }
+  .hint { color: var(--muted); font-size: 12.5px; text-align: center; }
+  .link-btn { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; text-decoration: underline; padding: 4px; }
+  .link-btn:hover { color: var(--text); }
+
+  #promptBox { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; }
+  #promptBox > summary { cursor: pointer; color: var(--muted); font-size: 13px; letter-spacing: .02em; list-style: none; }
+  #promptBox > summary::-webkit-details-marker { display: none; }
+  #promptBox > summary::before { content: "✎ "; color: var(--accent); }
+  #promptText { width: 100%; margin-top: 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; color: var(--text); padding: 12px 14px; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+  #promptText:focus { outline: none; border-color: var(--accent); }
+  #promptText[readonly] { opacity: .75; cursor: default; background: #14171d; }
+  #promptText:not([readonly]) { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(246,201,69,.12); }
+  .promptRow { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; gap: 10px; flex-wrap: wrap; }
+  .promptBtns { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .btn.small { padding: 8px 16px; font-size: 14px; box-shadow: none; }
+  .note { color: var(--muted); font-size: 12px; }
+
+  /* Voice-only stage: no transcript, just a state orb. Neither the student's
+     nor the tutor's words are ever shown on screen. */
+  #stage { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; min-height: 240px; padding: 28px; }
+  #orb { width: 128px; height: 128px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #2a2f3a, #14171d); border: 1px solid var(--border); transition: background .3s, box-shadow .3s, transform .25s; }
+  #orb.connecting { box-shadow: 0 0 0 6px rgba(246,201,69,.12); animation: pulse 1s infinite; }
+  #orb.connected, #orb.listening { background: radial-gradient(circle at 35% 30%, #3a6fb0, #1d3a5c); box-shadow: 0 0 42px rgba(90,169,255,.40); }
+  #orb.speaking { background: radial-gradient(circle at 35% 30%, #ffe08a, #c79a1f); box-shadow: 0 0 54px rgba(246,201,69,.5); animation: pulse .9s infinite; }
+  #orb.error { background: radial-gradient(circle at 35% 30%, #ff7d70, #a3271c); }
+  #stageText { color: var(--muted); font-size: 15px; text-align: center; max-width: 420px; }
+
+  footer { color: var(--muted); font-size: 12px; text-align: center; padding: 0 20px 24px; max-width: 640px; }
+  .err { color: var(--accent-2); font-size: 13px; text-align: center; min-height: 18px; }
+</style>
+</head>
+<body>
+  <header>
+    <div class="flag">🇩🇪 &nbsp;DEUTSCH</div>
+    <h1>German <span class="gold">Voice Tutor</span></h1>
+    <p class="sub">Sprich einfach drauflos — wie ein echtes Gespräch.</p>
+  </header>
+
+  <main>
+    <form id="login" class="login" autocomplete="on">
+      <div class="login-title">Anmelden · Sign in</div>
+      <input id="username" name="username" type="text" placeholder="Username" autocomplete="username" />
+      <input id="password" name="password" type="password" placeholder="Password" autocomplete="current-password" />
+      <button id="loginBtn" type="submit" class="btn full">Sign in</button>
+      <div class="err" id="loginErr"></div>
+    </form>
+
+    <div id="app" hidden>
+      <div class="controls">
+        <button id="connectBtn" type="button" class="btn">▶︎ Start conversation</button>
+        <span class="status"><span id="dot" class="dot"></span><span id="statusText">Press start to begin</span></span>
+        <button id="logoutBtn" class="link-btn" type="button">Sign out</button>
+      </div>
+      <div class="meter" title="microphone level"><i id="meterBar"></i></div>
+      <div class="hint">Hands-free: just talk, pause, and the tutor replies. You can interrupt her any time. Echo cancellation keeps her voice out of your mic.</div>
+
+      <details id="promptBox" open>
+        <summary>Tutor instructions</summary>
+        <textarea id="promptText" rows="9" spellcheck="false" placeholder="Loading…" readonly></textarea>
+        <div class="promptRow">
+          <div class="promptBtns">
+            <button id="editPromptBtn" type="button" class="btn small">✎ Edit</button>
+            <button id="savePromptBtn" type="button" class="btn small" hidden>Save &amp; restart tutor</button>
+            <button id="cancelPromptBtn" type="button" class="link-btn" hidden>Cancel</button>
+            <button id="resetPromptBtn" type="button" class="link-btn" hidden>Reset to default</button>
+          </div>
+          <span id="promptNote" class="note"></span>
+        </div>
+      </details>
+
+      <div class="err" id="err"></div>
+
+      <div id="stage">
+        <div id="orb"></div>
+        <div id="stageText">Press start, then just talk — it's all voice.</div>
+      </div>
+    </div>
+  </main>
+
+  <footer>Powered by OpenAI Realtime (<span id="modelName">gpt-realtime-2</span>). Audio streams directly between your browser and OpenAI.</footer>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const loginForm=$("login"), usernameEl=$("username"), passwordEl=$("password"), loginBtn=$("loginBtn"), loginErrEl=$("loginErr"), appEl=$("app");
+  const connectBtn=$("connectBtn"), logoutBtn=$("logoutBtn"), dot=$("dot"), statusText=$("statusText"),
+        errEl=$("err"), modelNameEl=$("modelName"), meterBar=$("meterBar"), orbEl=$("orb"), stageTextEl=$("stageText");
+  const promptText=$("promptText"), editPromptBtn=$("editPromptBtn"), savePromptBtn=$("savePromptBtn"),
+        cancelPromptBtn=$("cancelPromptBtn"), resetPromptBtn=$("resetPromptBtn"), promptNote=$("promptNote");
+
+  // ----- editable system prompt (read-only until you click Edit) -----
+  const PROMPT_KEY="german_prompt";
+  let defaultPrompt="";
+  function isEdited(){ try{ const s=localStorage.getItem(PROMPT_KEY); return s!=null && s.trim() && s.trim()!==defaultPrompt.trim(); }catch(e){ return false; } }
+  async function fetchDefaultPrompt(){
+    if(defaultPrompt) return defaultPrompt;
+    try{ const r=await fetch("/api/german/default-prompt"); if(r.ok) defaultPrompt=(await r.json()).prompt||""; }catch(e){}
+    return defaultPrompt;
+  }
+  async function loadPrompt(){
+    let saved=null; try{ saved=localStorage.getItem(PROMPT_KEY); }catch(e){}
+    const def=await fetchDefaultPrompt();
+    promptText.value = (saved!=null && saved.trim()) ? saved : def;
+    setEditMode(false);
+    promptNote.textContent = isEdited() ? "your custom prompt" : "default prompt";
+  }
+  function savePromptValue(){ try{ localStorage.setItem(PROMPT_KEY, promptText.value); }catch(e){} }
+
+  function setEditMode(on){
+    promptText.readOnly = !on;
+    editPromptBtn.hidden = on;
+    savePromptBtn.hidden = !on;
+    cancelPromptBtn.hidden = !on;
+    resetPromptBtn.hidden = !on;
+    if(on){ promptText.focus(); }
+  }
+  function enterEdit(){ setEditMode(true); promptNote.textContent = "editing — click Save to apply"; }
+  function cancelEdit(){ loadPrompt(); }   // reverts textarea to the saved value
+
+  async function savePromptAndApply(){
+    savePromptValue();
+    setEditMode(false);
+    promptNote.textContent = isEdited() ? "your custom prompt — saved" : "default prompt — saved";
+    if(connected || connecting){
+      // Restart the live session so it picks up the new instructions.
+      promptNote.textContent = "restarting tutor with your new instructions…";
+      endSession();
+      await new Promise(r=>setTimeout(r,350));
+      await connect();
+      promptNote.textContent = "tutor restarted with your instructions";
+    } else {
+      promptNote.textContent += " — applies when you press start";
+    }
+  }
+
+  // ----- auth -----
+  const TOKEN_KEY="german_token";
+  const getToken=()=>{try{return localStorage.getItem(TOKEN_KEY);}catch(e){return null;}};
+  const setToken=(t)=>{try{localStorage.setItem(TOKEN_KEY,t);}catch(e){}};
+  const clearToken=()=>{try{localStorage.removeItem(TOKEN_KEY);}catch(e){}};
+  function showApp(){loginForm.hidden=true;appEl.hidden=false;loadPrompt();}
+  function showLogin(msg){appEl.hidden=true;loginForm.hidden=false;loginErrEl.textContent=msg||"";if(msg)passwordEl.value="";}
+  async function doLogin(e){
+    if(e)e.preventDefault(); loginErrEl.textContent=""; loginBtn.disabled=true; loginBtn.textContent="Signing in…";
+    try{
+      const r=await fetch("/api/german/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:usernameEl.value||"",password:passwordEl.value||""})});
+      if(!r.ok){const e2=await r.json().catch(()=>({}));throw new Error(e2.detail||("Sign-in failed ("+r.status+")"));}
+      setToken((await r.json()).token); showApp();
+    }catch(err){loginErrEl.textContent=err&&err.message?err.message:"Sign-in failed";}
+    finally{loginBtn.disabled=false; loginBtn.textContent="Sign in";}
+  }
+
+  // ----- voice (hands-free) -----
+  let pc=null, dc=null, localStream=null, audioEl=null;
+  let connecting=false, connected=false, assistantSpeaking=false;
+  let liveTutorText="";
+  let audioCtx=null, analyser=null, meterRAF=0;
+
+  // Diagnostics (used by the live browser echo test)
+  const diag = window.__diag = { events: [], micRMS: 0, micRMSWhileTutor: [], assistantSpeaking:false, speechStartedWhileTutor:0, responsesCancelled:0, tutorTurns: [], userTurns: [] };
+  // Test affordance: ask the tutor to speak a given text (drives a long
+  // monologue so an automated echo test has a sustained speaking window).
+  diag.say = (text) => {
+    if (dc && dc.readyState === "open") {
+      dc.send(JSON.stringify({ type: "conversation.item.create", item: { type: "message", role: "user", content: [{ type: "input_text", text }] } }));
+      dc.send(JSON.stringify({ type: "response.create" }));
+    }
+  };
+
+  function setStatus(cls,text){dot.className="dot"+(cls?" "+cls:"");statusText.textContent=text;orbEl.className="orb"+(cls?" "+cls:"");stageTextEl.textContent=text;}
+  function setError(msg){errEl.textContent=msg||"";}
+  // Voice-only: nothing either party says is rendered on screen. Transcript
+  // text is kept solely in window.__diag for automated tests.
+  function finalizeLiveTutor(t){const text=(t||liveTutorText||"").trim();liveTutorText="";if(text)diag.tutorTurns.push(text);}
+
+  function startMeter(){
+    try{
+      audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+      const src=audioCtx.createMediaStreamSource(localStream);
+      analyser=audioCtx.createAnalyser(); analyser.fftSize=512;
+      src.connect(analyser);
+      const buf=new Uint8Array(analyser.fftSize);
+      const tick=()=>{
+        analyser.getByteTimeDomainData(buf);
+        let sum=0; for(let i=0;i<buf.length;i++){const v=(buf[i]-128)/128;sum+=v*v;}
+        const rms=Math.sqrt(sum/buf.length);
+        diag.micRMS=rms;
+        if(assistantSpeaking) diag.micRMSWhileTutor.push(rms);
+        meterBar.style.width=Math.min(100,Math.round(rms*320))+"%";
+        meterRAF=requestAnimationFrame(tick);
+      };
+      tick();
+    }catch(e){console.warn("meter",e);}
+  }
+  function stopMeter(){cancelAnimationFrame(meterRAF);meterRAF=0;if(audioCtx){try{audioCtx.close();}catch(e){}audioCtx=null;}analyser=null;meterBar.style.width="0%";}
+
+  function tutorSpeaking(on){assistantSpeaking=on;diag.assistantSpeaking=on;setStatus(on?"speaking":"listening",on?"Tutor speaking…":"Listening — your turn");}
+
+  function handleEvent(ev){
+    const t=ev.type||"";
+    diag.events.push({t, at: (audioCtx?audioCtx.currentTime:0)});
+    if(diag.events.length>200) diag.events.shift();
+    switch(t){
+      case "input_audio_buffer.speech_started":
+        if(assistantSpeaking) diag.speechStartedWhileTutor++;
+        setStatus("listening","Listening…"); break;
+      case "response.created":
+      case "output_audio_buffer.started":
+        tutorSpeaking(true); break;
+      case "response.output_audio_transcript.delta":
+      case "response.audio_transcript.delta": liveTutorText+=(ev.delta||""); break;
+      case "response.output_audio_transcript.done":
+      case "response.audio_transcript.done": finalizeLiveTutor(ev.transcript); break;
+      case "conversation.item.input_audio_transcription.completed":{const u=(ev.transcript||"").trim();if(u)diag.userTurns.push(u);break;}
+      case "output_audio_buffer.stopped":
+      case "output_audio_buffer.cleared":
+      case "response.done": finalizeLiveTutor(); tutorSpeaking(false); break;
+      case "response.cancelled": diag.responsesCancelled++; break;
+      case "error": console.error("Realtime error",ev); setError((ev.error&&ev.error.message)||"Realtime error"); break;
+      default: break;
+    }
+  }
+
+  async function connect(){
+    if(connecting||connected) return;
+    connecting=true; setError(""); connectBtn.disabled=true; setStatus("connecting","Connecting…");
+    savePromptValue();
+    try{
+      const sr=await fetch("/api/german/session",{method:"POST",headers:{"Authorization":"Bearer "+(getToken()||""),"Content-Type":"application/json"},body:JSON.stringify({instructions: promptText.value||""})});
+      if(sr.status===401){clearToken();connecting=false;connectBtn.disabled=false;setStatus("","Press start to begin");showLogin("Please sign in again.");return;}
+      if(!sr.ok){const e=await sr.json().catch(()=>({}));throw new Error(e.detail||("Session error "+sr.status));}
+      const session=await sr.json(); if(session.model) modelNameEl.textContent=session.model;
+
+      // Microphone WITH browser echo cancellation — this is what removes the
+      // tutor's voice from the mic so she never hears herself (like ChatGPT).
+      // (?aec=0 disables it; used only by the automated echo A/B test.)
+      const aecOn = new URLSearchParams(location.search).get("aec") !== "0";
+      diag.aec = aecOn;
+      localStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:aecOn,noiseSuppression:aecOn,autoGainControl:aecOn}});
+
+      pc=new RTCPeerConnection();
+      localStream.getTracks().forEach((tr)=>pc.addTrack(tr,localStream));
+
+      audioEl=document.createElement("audio"); audioEl.autoplay=true; audioEl.style.display="none"; document.body.appendChild(audioEl);
+      pc.ontrack=(e)=>{ if(e.streams&&e.streams[0]){ audioEl.srcObject=e.streams[0]; audioEl.play().catch(()=>{});} };
+
+      dc=pc.createDataChannel("oai-events");
+      dc.onopen=()=>{
+        connecting=false; connected=true;
+        connectBtn.disabled=false; connectBtn.classList.add("live"); connectBtn.textContent="■ End conversation";
+        setStatus("listening","Connected — the tutor is greeting you…");
+        startMeter();
+        dc.send(JSON.stringify({type:"response.create"})); // tutor greets first
+      };
+      dc.onclose=()=>{ if(connected) endSession(); };
+      dc.onmessage=(e)=>{ try{ handleEvent(JSON.parse(e.data)); }catch(err){ console.error("parse",err);} };
+      pc.onconnectionstatechange=()=>{ if(pc&&(pc.connectionState==="failed"||pc.connectionState==="disconnected")){ setError("Connection lost."); endSession(); } };
+
+      const offer=await pc.createOffer(); await pc.setLocalDescription(offer);
+      const model=session.model||"gpt-realtime-2";
+      const resp=await fetch("https://api.openai.com/v1/realtime/calls?model="+encodeURIComponent(model),{method:"POST",headers:{"Authorization":"Bearer "+session.client_secret,"Content-Type":"application/sdp"},body:offer.sdp});
+      if(!resp.ok) throw new Error("SDP exchange failed: "+resp.status);
+      await pc.setRemoteDescription({type:"answer",sdp:await resp.text()});
+    }catch(err){ console.error(err); setError(err&&err.message?err.message:"Could not start"); endSession(); }
+  }
+
+  function endSession(){
+    connecting=false; connected=false; assistantSpeaking=false; diag.assistantSpeaking=false;
+    finalizeLiveTutor(); stopMeter();
+    if(localStream){localStream.getTracks().forEach((t)=>t.stop());localStream=null;}
+    if(dc){try{dc.close();}catch(e){}dc=null;}
+    if(pc){try{pc.close();}catch(e){}pc=null;}
+    if(audioEl){audioEl.srcObject=null;audioEl.remove();audioEl=null;}
+    connectBtn.disabled=false; connectBtn.classList.remove("live"); connectBtn.textContent="▶︎ Start conversation";
+    setStatus("","Press start to begin");
+  }
+
+  loginForm.addEventListener("submit",doLogin);
+  logoutBtn.addEventListener("click",()=>{endSession();clearToken();showLogin("Signed out.");});
+  connectBtn.addEventListener("click",()=>{(connected||connecting)?endSession():connect();});
+  editPromptBtn.addEventListener("click",enterEdit);
+  savePromptBtn.addEventListener("click",savePromptAndApply);
+  cancelPromptBtn.addEventListener("click",cancelEdit);
+  resetPromptBtn.addEventListener("click",async()=>{ const d=await fetchDefaultPrompt(); promptText.value=d; promptNote.textContent="reset to default — click Save to apply"; });
+  promptText.addEventListener("input",()=>{ if(!promptText.readOnly) promptNote.textContent="unsaved changes — click Save to apply"; });
+  window.addEventListener("beforeunload",endSession);
+  if(getToken()) showApp(); else showLogin();
+})();
+</script>
+</body>
+</html>

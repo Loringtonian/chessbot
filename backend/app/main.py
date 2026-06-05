@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 from .config import get_settings
 from .api.routes.analysis import router as analysis_router
 from .api.routes.realtime import router as realtime_router
+from .api.routes.german import router as german_router
 
 
 def setup_logging():
@@ -107,9 +108,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Include routers
+    # Include routers (registered before the SPA catch-all so /german and
+    # /api/german/* take precedence over index.html fallback)
     app.include_router(analysis_router)
     app.include_router(realtime_router)
+    app.include_router(german_router)
 
     # Serve static frontend if the directory exists (production)
     if STATIC_DIR.exists():
