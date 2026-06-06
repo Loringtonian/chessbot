@@ -332,7 +332,10 @@
   // ----- live session tuning (speed + context-aware VAD) -----
   let currentSilenceMs = DEF.baseSilenceMs;
   function sendSessionUpdate(session){
-    const msg={type:"session.update",session};
+    // GA Realtime requires the session-type discriminator on EVERY update,
+    // not just at create — without it OpenAI rejects with
+    // "Missing required parameter: 'session.type'".
+    const msg={type:"session.update",session:{type:"realtime",...session}};
     diag.lastSessionUpdate=msg;                        // recorded even when offline (test hook)
     if(dc && dc.readyState==="open") dc.send(JSON.stringify(msg));
   }
