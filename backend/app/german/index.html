@@ -3,42 +3,57 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Deutsch-Tutor · German Voice Tutor</title>
+<title>Sprich mit der Tutorin · German Mosaic</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Life+Savers:wght@400;700;800&family=Quicksand:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0e1014; --panel: #171a21; --panel-2: #1f232c;
-    --text: #eef1f6; --muted: #9aa3b2;
-    --accent: #f6c945; --accent-2: #e94b3c; --user: #5aa9ff; --ok: #3ecf8e;
-    --border: #2a2f3a;
+    /* German Mosaic brand tokens (DESIGN.md / german-mosaic.css) */
+    --gm-burgundy: #7f2e44; --gm-burgundy-soft: #9c4761;
+    --gm-teal: #2d6769; --gm-teal-soft: #3f8285;
+    --gm-sand: #cbb098; --gm-sand-50: #e5d8c5;
+    --gm-cream: #f7eff2; --gm-ice: #e8f2f2; --gm-ink: #1a1014; --gm-error: #a82a3d;
+    /* aliases this page's existing rules reference */
+    --bg: #fbfaf7; --panel: var(--gm-cream); --panel-2: #ffffff;
+    --text: var(--gm-ink); --muted: #7c6b71;
+    --accent: var(--gm-burgundy); --accent-2: var(--gm-error); --user: var(--gm-teal); --ok: var(--gm-teal);
+    --border: var(--gm-sand-50);
+    --font-display: 'Lilita One', 'More Sugar', system-ui, sans-serif;
+    --font-accent: 'Life Savers', Georgia, serif;
+    --font-body: 'Quicksand', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
   html, body { height: 100%; }
   body {
     margin: 0;
-    background: radial-gradient(1200px 600px at 50% -10%, #1a1e27 0%, var(--bg) 60%);
+    background: radial-gradient(1100px 580px at 50% -8%, var(--gm-cream) 0%, var(--gm-sand-50) 55%, var(--gm-sand) 100%) no-repeat;
+    background-color: var(--gm-sand);
     color: var(--text);
-    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font: 16px/1.6 var(--font-body);
     display: flex; flex-direction: column; align-items: center; min-height: 100%;
   }
-  header { width: 100%; max-width: 720px; padding: 28px 20px 8px; text-align: center; }
-  .flag { letter-spacing: 2px; font-size: 13px; color: var(--muted); }
-  h1 { margin: 6px 0 2px; font-size: 26px; font-weight: 700; }
-  h1 .gold { color: var(--accent); }
-  .sub { color: var(--muted); font-size: 14px; margin: 0; }
+  header { width: 100%; max-width: 680px; padding: 32px 20px 8px; text-align: center; }
+  .brandmark { display: flex; justify-content: center; margin-bottom: 12px; }
+  .brandmark svg { height: 64px; width: auto; }
+  h1 { margin: 8px 0 4px; font-family: var(--font-display); font-weight: 400; font-size: 30px; color: var(--gm-burgundy); letter-spacing: .01em; }
+  h1 .gold { color: var(--gm-teal); }
+  .sub { color: var(--gm-teal); font-family: var(--font-accent); font-size: 16px; margin: 0; }
   main { width: 100%; max-width: 720px; padding: 16px 20px 40px; flex: 1; display: flex; flex-direction: column; gap: 16px; }
 
-  .login { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 320px; margin: 24px auto; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 22px; }
-  .login-title { text-align: center; color: var(--muted); font-size: 14px; letter-spacing: .04em; }
+  .login { display: flex; flex-direction: column; gap: 13px; width: 100%; max-width: 360px; margin: 28px auto; background: var(--gm-cream); border: 1px solid var(--gm-sand-50); border-radius: 28px; padding: 26px; box-shadow: 0 18px 48px rgba(26,16,20,.16); }
+  .login-title { text-align: center; color: var(--gm-burgundy); font-family: var(--font-display); font-weight: 400; font-size: 20px; }
   .login input { appearance: none; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; color: var(--text); padding: 12px 14px; font-size: 15px; width: 100%; }
   .login input:focus { outline: none; border-color: var(--accent); }
 
-  .btn { appearance: none; border: none; cursor: pointer; border-radius: 999px; padding: 14px 24px; font-size: 16px; font-weight: 650; color: #1a1205; background: linear-gradient(180deg, #ffd75e, var(--accent)); box-shadow: 0 6px 20px rgba(246,201,69,.22); transition: transform .08s, filter .15s; }
-  .btn:hover { filter: brightness(1.05); }
-  .btn:active { transform: translateY(1px); }
-  .btn:disabled { opacity: .55; cursor: default; }
+  .btn { appearance: none; border: none; cursor: pointer; border-radius: 20px; padding: 14px 26px; font-family: var(--font-body); font-size: 16px; font-weight: 700; color: var(--gm-cream); background: var(--gm-burgundy); box-shadow: 0 6px 18px rgba(127,46,68,.22); transition: background-color .15s, transform .08s; }
+  .btn:hover { background: var(--gm-burgundy-soft); transform: translateY(-1px); }
+  .btn:active { transform: translateY(0); }
+  .btn:disabled { opacity: .5; cursor: default; transform: none; }
   .btn.full { width: 100%; }
-  .btn.live { color: #fff; background: linear-gradient(180deg, #ff6a5c, var(--accent-2)); box-shadow: 0 6px 22px rgba(233,75,60,.3); }
+  .btn.live { color: var(--gm-cream); background: var(--gm-error); box-shadow: 0 6px 18px rgba(168,42,61,.26); }
+  .btn.live:hover { background: #bd3346; }
 
   .controls { display: flex; align-items: center; gap: 14px; justify-content: center; flex-wrap: wrap; }
   .status { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
@@ -61,8 +76,8 @@
   #promptBox > summary::before { content: "✎ "; color: var(--accent); }
   #promptText { width: 100%; margin-top: 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; color: var(--text); padding: 12px 14px; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
   #promptText:focus { outline: none; border-color: var(--accent); }
-  #promptText[readonly] { opacity: .75; cursor: default; background: #14171d; }
-  #promptText:not([readonly]) { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(246,201,69,.12); }
+  #promptText[readonly] { opacity: .85; cursor: default; background: #faf6f7; }
+  #promptText:not([readonly]) { border-color: var(--gm-burgundy); box-shadow: 0 0 0 3px rgba(127,46,68,.12); }
   .promptRow { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; gap: 10px; flex-wrap: wrap; }
   .promptBtns { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .btn.small { padding: 8px 16px; font-size: 14px; box-shadow: none; }
@@ -86,11 +101,11 @@
   /* Voice-only stage: no transcript, just a state orb. Neither the student's
      nor the tutor's words are ever shown on screen. */
   #stage { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; min-height: 240px; padding: 28px; }
-  #orb { width: 128px; height: 128px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #2a2f3a, #14171d); border: 1px solid var(--border); transition: background .3s, box-shadow .3s, transform .25s; }
-  #orb.connecting { box-shadow: 0 0 0 6px rgba(246,201,69,.12); animation: pulse 1s infinite; }
-  #orb.connected, #orb.listening { background: radial-gradient(circle at 35% 30%, #3a6fb0, #1d3a5c); box-shadow: 0 0 42px rgba(90,169,255,.40); }
-  #orb.speaking { background: radial-gradient(circle at 35% 30%, #ffe08a, #c79a1f); box-shadow: 0 0 54px rgba(246,201,69,.5); animation: pulse .9s infinite; }
-  #orb.error { background: radial-gradient(circle at 35% 30%, #ff7d70, #a3271c); }
+  #orb { width: 132px; height: 132px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, var(--gm-cream), var(--gm-sand)); border: 1px solid var(--gm-sand-50); box-shadow: 0 8px 28px rgba(26,16,20,.10); transition: background .3s, box-shadow .3s, transform .25s; }
+  #orb.connecting { box-shadow: 0 0 0 6px rgba(127,46,68,.12); animation: pulse 1s infinite; }
+  #orb.connected, #orb.listening { background: radial-gradient(circle at 35% 30%, var(--gm-teal-soft), var(--gm-teal)); box-shadow: 0 0 48px rgba(45,103,105,.42); }
+  #orb.speaking { background: radial-gradient(circle at 35% 30%, var(--gm-burgundy-soft), var(--gm-burgundy)); box-shadow: 0 0 56px rgba(127,46,68,.5); animation: pulse .9s infinite; }
+  #orb.error { background: radial-gradient(circle at 35% 30%, #c75566, var(--gm-error)); }
   #stageText { color: var(--muted); font-size: 15px; text-align: center; max-width: 420px; }
 
   footer { color: var(--muted); font-size: 12px; text-align: center; padding: 0 20px 24px; max-width: 640px; }
@@ -99,8 +114,23 @@
 </head>
 <body>
   <header>
-    <div class="flag">🇩🇪 &nbsp;DEUTSCH</div>
-    <h1>German <span class="gold">Voice Tutor</span></h1>
+    <div class="brandmark">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 480" role="img" aria-label="German Mosaic — Online German School">
+        <path d="M 100 60 Q 40 60 40 120 L 40 380 Q 40 440 100 440 L 120 440 Q 105 460 80 480 Q 130 470 175 440 L 360 440 Q 420 440 420 380 L 420 120 Q 420 60 360 60 Z" fill="#7f2e44"/>
+        <g font-family="'Lilita One','More Sugar',system-ui,sans-serif" font-weight="400" fill="#f7eff2" text-anchor="middle">
+          <text x="230" y="220" font-size="170">G</text>
+          <text x="230" y="390" font-size="170">M</text>
+        </g>
+        <g font-family="'Lilita One','More Sugar',system-ui,sans-serif" font-weight="400" text-anchor="start">
+          <text x="480" y="220" font-size="140" fill="#7f2e44">German</text>
+          <text x="480" y="360" font-size="140" fill="#7f2e44">Mosaic</text>
+        </g>
+        <g font-family="'Quicksand',system-ui,sans-serif" font-weight="700" text-anchor="start" fill="#2d6769">
+          <text x="486" y="420" font-size="36">Online German School</text>
+        </g>
+      </svg>
+    </div>
+    <h1>Sprich mit der <span class="gold">Tutorin</span></h1>
     <p class="sub">Sprich einfach drauflos — wie ein echtes Gespräch.</p>
   </header>
 
