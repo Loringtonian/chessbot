@@ -68,6 +68,21 @@
   .btn.small { padding: 8px 16px; font-size: 14px; box-shadow: none; }
   .note { color: var(--muted); font-size: 12px; }
 
+  /* Voice & timing settings panel */
+  #settingsBox { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; }
+  #settingsBox > summary { cursor: pointer; color: var(--muted); font-size: 13px; letter-spacing: .02em; list-style: none; }
+  #settingsBox > summary::-webkit-details-marker { display: none; }
+  #settingsBox > summary::before { content: "⚙ "; color: var(--accent); }
+  .setRow { display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+  .setRow label.cap { flex: 0 0 130px; color: var(--text); font-size: 14px; }
+  .setRow .val { color: var(--accent); font-size: 13px; min-width: 52px; text-align: right; font-variant-numeric: tabular-nums; }
+  .setRow select { appearance: none; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; color: var(--text); padding: 9px 12px; font-size: 14px; flex: 1; min-width: 150px; }
+  .setRow select:focus { outline: none; border-color: var(--accent); }
+  .setRow input[type=range] { flex: 1; min-width: 150px; accent-color: var(--accent); height: 4px; }
+  .switch { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; color: var(--text); font-size: 14px; }
+  .switch input { width: 17px; height: 17px; accent-color: var(--accent); cursor: pointer; }
+  .setHint { color: var(--muted); font-size: 12px; margin-top: 12px; }
+
   /* Voice-only stage: no transcript, just a state orb. Neither the student's
      nor the tutor's words are ever shown on screen. */
   #stage { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; min-height: 240px; padding: 28px; }
@@ -121,6 +136,33 @@
         </div>
       </details>
 
+      <details id="settingsBox">
+        <summary>Voice &amp; timing</summary>
+        <div class="setRow">
+          <label class="cap" for="voiceSel">Voice</label>
+          <select id="voiceSel"></select>
+        </div>
+        <div class="setRow">
+          <label class="cap" for="speedRange">Speaking speed</label>
+          <input id="speedRange" type="range" min="0.25" max="1.5" step="0.05" />
+          <span class="val" id="speedVal">0.9×</span>
+        </div>
+        <div class="setRow">
+          <label class="cap" for="baseSilRange">Reply wait</label>
+          <input id="baseSilRange" type="range" min="0.3" max="2.5" step="0.1" />
+          <span class="val" id="baseSilVal">0.8s</span>
+        </div>
+        <div class="setRow">
+          <label class="switch" for="smartPause"><input id="smartPause" type="checkbox" /> Give extra time to answer after the tutor asks a question</label>
+        </div>
+        <div class="setRow" id="qSilWrap">
+          <label class="cap" for="qSilRange">Wait after a question</label>
+          <input id="qSilRange" type="range" min="0.8" max="4" step="0.1" />
+          <span class="val" id="qSilVal">1.8s</span>
+        </div>
+        <div class="setHint">Speed and timing apply live. Changing the voice restarts the tutor.</div>
+      </details>
+
       <div class="err" id="err"></div>
 
       <div id="stage">
@@ -141,6 +183,42 @@
         errEl=$("err"), modelNameEl=$("modelName"), meterBar=$("meterBar"), orbEl=$("orb"), stageTextEl=$("stageText");
   const promptText=$("promptText"), editPromptBtn=$("editPromptBtn"), savePromptBtn=$("savePromptBtn"),
         cancelPromptBtn=$("cancelPromptBtn"), resetPromptBtn=$("resetPromptBtn"), promptNote=$("promptNote");
+  const voiceSel=$("voiceSel"), speedRange=$("speedRange"), speedVal=$("speedVal"),
+        baseSilRange=$("baseSilRange"), baseSilVal=$("baseSilVal"), smartPauseEl=$("smartPause"),
+        qSilRange=$("qSilRange"), qSilVal=$("qSilVal"), qSilWrap=$("qSilWrap");
+
+  // ----- voice & timing settings -----
+  // Voice list mirrors the backend whitelist (marin/cedar = newest, ✦). The
+  // backend re-clamps everything, so the client is a convenience, not a gate.
+  const VOICES=["marin","cedar","alloy","ash","ballad","coral","echo","sage","shimmer","verse"];
+  const VAD_THRESHOLD=0.75, VAD_PREFIX_MS=300;   // kept in sync with german.py
+  const DEF={ voice:"marin", speed:0.9, baseSilenceMs:800, questionSilenceMs:1800, smartPause:true };
+  const SK={ voice:"german_voice", speed:"german_speed", base:"german_base_sil", q:"german_q_sil", smart:"german_smart" };
+  const lsGet=(k,d)=>{ try{ const v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } };
+  const lsSet=(k,v)=>{ try{ localStorage.setItem(k,String(v)); }catch(e){} };
+  const clampNum=(n,lo,hi,d)=>Number.isFinite(n)?Math.max(lo,Math.min(hi,n)):d;
+  function currentSettings(){
+    const v=lsGet(SK.voice,DEF.voice);
+    return {
+      voice: VOICES.includes(v)?v:DEF.voice,
+      speed: clampNum(parseFloat(lsGet(SK.speed,DEF.speed)),0.25,1.5,DEF.speed),
+      baseSilenceMs: clampNum(parseInt(lsGet(SK.base,DEF.baseSilenceMs),10),200,5000,DEF.baseSilenceMs),
+      questionSilenceMs: clampNum(parseInt(lsGet(SK.q,DEF.questionSilenceMs),10),200,5000,DEF.questionSilenceMs),
+      smartPause: lsGet(SK.smart, DEF.smartPause?"1":"0")==="1",
+    };
+  }
+  function initSettingsUI(){
+    if(!voiceSel.options.length){
+      for(const v of VOICES){ const o=document.createElement("option"); o.value=v; o.textContent=v[0].toUpperCase()+v.slice(1)+((v==="marin"||v==="cedar")?" ✦":""); voiceSel.appendChild(o); }
+    }
+    const s=currentSettings();
+    voiceSel.value=s.voice;
+    speedRange.value=s.speed; speedVal.textContent=s.speed.toFixed(2)+"×";
+    baseSilRange.value=(s.baseSilenceMs/1000).toFixed(1); baseSilVal.textContent=(s.baseSilenceMs/1000).toFixed(1)+"s";
+    smartPauseEl.checked=s.smartPause;
+    qSilRange.value=(s.questionSilenceMs/1000).toFixed(1); qSilVal.textContent=(s.questionSilenceMs/1000).toFixed(1)+"s";
+    qSilWrap.hidden=!s.smartPause;
+  }
 
   // ----- editable system prompt (read-only until you click Edit) -----
   const PROMPT_KEY="german_prompt";
@@ -192,7 +270,7 @@
   const getToken=()=>{try{return localStorage.getItem(TOKEN_KEY);}catch(e){return null;}};
   const setToken=(t)=>{try{localStorage.setItem(TOKEN_KEY,t);}catch(e){}};
   const clearToken=()=>{try{localStorage.removeItem(TOKEN_KEY);}catch(e){}};
-  function showApp(){loginForm.hidden=true;appEl.hidden=false;loadPrompt();}
+  function showApp(){loginForm.hidden=true;appEl.hidden=false;loadPrompt();initSettingsUI();}
   function showLogin(msg){appEl.hidden=true;loginForm.hidden=false;loginErrEl.textContent=msg||"";if(msg)passwordEl.value="";}
   async function doLogin(e){
     if(e)e.preventDefault(); loginErrEl.textContent=""; loginBtn.disabled=true; loginBtn.textContent="Signing in…";
@@ -220,6 +298,26 @@
       dc.send(JSON.stringify({ type: "response.create" }));
     }
   };
+
+  // ----- live session tuning (speed + context-aware VAD) -----
+  let currentSilenceMs = DEF.baseSilenceMs;
+  function sendSessionUpdate(session){
+    const msg={type:"session.update",session};
+    diag.lastSessionUpdate=msg;                        // recorded even when offline (test hook)
+    if(dc && dc.readyState==="open") dc.send(JSON.stringify(msg));
+  }
+  const turnDetection=(silenceMs)=>({type:"server_vad",threshold:VAD_THRESHOLD,prefix_padding_ms:VAD_PREFIX_MS,silence_duration_ms:silenceMs,interrupt_response:true});
+  function applySilence(ms){ currentSilenceMs=ms; sendSessionUpdate({audio:{input:{turn_detection:turnDetection(ms)}}}); }
+  function applySpeed(speed){ sendSessionUpdate({audio:{output:{speed}}}); }
+  // Single signal: on every tutor turn, pick base vs. question-window silence.
+  // A "?" in the tutor's just-finished turn => give the student longer to answer;
+  // any statement => snappy. No revert event, so no async ordering race.
+  function applySmartSilence(text){
+    const s=currentSettings();
+    const desired=(s.smartPause && /\?/.test(text||"")) ? s.questionSilenceMs : s.baseSilenceMs;
+    diag.lastSilenceMs=desired;
+    if(desired!==currentSilenceMs) applySilence(desired);
+  }
 
   function setStatus(cls,text){dot.className="dot"+(cls?" "+cls:"");statusText.textContent=text;orbEl.className="orb"+(cls?" "+cls:"");stageTextEl.textContent=text;}
   function setError(msg){errEl.textContent=msg||"";}
@@ -264,7 +362,7 @@
       case "response.output_audio_transcript.delta":
       case "response.audio_transcript.delta": liveTutorText+=(ev.delta||""); break;
       case "response.output_audio_transcript.done":
-      case "response.audio_transcript.done": finalizeLiveTutor(ev.transcript); break;
+      case "response.audio_transcript.done": { const _tt=ev.transcript||liveTutorText; finalizeLiveTutor(ev.transcript); applySmartSilence(_tt); break; }
       case "conversation.item.input_audio_transcription.completed":{const u=(ev.transcript||"").trim();if(u)diag.userTurns.push(u);break;}
       case "output_audio_buffer.stopped":
       case "output_audio_buffer.cleared":
@@ -280,7 +378,8 @@
     connecting=true; setError(""); connectBtn.disabled=true; setStatus("connecting","Connecting…");
     savePromptValue();
     try{
-      const sr=await fetch("/api/german/session",{method:"POST",headers:{"Authorization":"Bearer "+(getToken()||""),"Content-Type":"application/json"},body:JSON.stringify({instructions: promptText.value||""})});
+      const st=currentSettings(); currentSilenceMs=st.baseSilenceMs;
+      const sr=await fetch("/api/german/session",{method:"POST",headers:{"Authorization":"Bearer "+(getToken()||""),"Content-Type":"application/json"},body:JSON.stringify({instructions: promptText.value||"", voice: st.voice, speed: st.speed, silence_ms: st.baseSilenceMs})});
       if(sr.status===401){clearToken();connecting=false;connectBtn.disabled=false;setStatus("","Press start to begin");showLogin("Please sign in again.");return;}
       if(!sr.ok){const e=await sr.json().catch(()=>({}));throw new Error(e.detail||("Session error "+sr.status));}
       const session=await sr.json(); if(session.model) modelNameEl.textContent=session.model;
@@ -304,6 +403,9 @@
         connectBtn.disabled=false; connectBtn.classList.add("live"); connectBtn.textContent="■ End conversation";
         setStatus("listening","Connected — the tutor is greeting you…");
         startMeter();
+        // Apply speed via session.update (create doesn't carry it) BEFORE the
+        // greeting so the first words are already at the chosen speed.
+        applySpeed(currentSettings().speed);
         dc.send(JSON.stringify({type:"response.create"})); // tutor greets first
       };
       dc.onclose=()=>{ if(connected) endSession(); };
@@ -337,6 +439,19 @@
   cancelPromptBtn.addEventListener("click",cancelEdit);
   resetPromptBtn.addEventListener("click",async()=>{ const d=await fetchDefaultPrompt(); promptText.value=d; promptNote.textContent="reset to default — click Save to apply"; });
   promptText.addEventListener("input",()=>{ if(!promptText.readOnly) promptNote.textContent="unsaved changes — click Save to apply"; });
+
+  // ----- settings controls -----
+  async function restartLive(){ if(connected||connecting){ endSession(); await new Promise(r=>setTimeout(r,350)); await connect(); } }
+  voiceSel.addEventListener("change",async()=>{ lsSet(SK.voice,voiceSel.value); await restartLive(); });
+  speedRange.addEventListener("input",()=>{ speedVal.textContent=parseFloat(speedRange.value).toFixed(2)+"×"; });
+  speedRange.addEventListener("change",()=>{ const v=parseFloat(speedRange.value); lsSet(SK.speed,v); applySpeed(v); });
+  baseSilRange.addEventListener("input",()=>{ baseSilVal.textContent=parseFloat(baseSilRange.value).toFixed(1)+"s"; });
+  baseSilRange.addEventListener("change",()=>{ const ms=Math.round(parseFloat(baseSilRange.value)*1000); lsSet(SK.base,ms); applySilence(ms); });
+  smartPauseEl.addEventListener("change",()=>{ lsSet(SK.smart,smartPauseEl.checked?"1":"0"); qSilWrap.hidden=!smartPauseEl.checked; if(!smartPauseEl.checked) applySilence(currentSettings().baseSilenceMs); });
+  qSilRange.addEventListener("input",()=>{ qSilVal.textContent=parseFloat(qSilRange.value).toFixed(1)+"s"; });
+  qSilRange.addEventListener("change",()=>{ lsSet(SK.q,Math.round(parseFloat(qSilRange.value)*1000)); });
+  diag.handleEvent=handleEvent;   // test hook: drive smart-VAD with synthetic events
+
   window.addEventListener("beforeunload",endSession);
   if(getToken()) showApp(); else showLogin();
 })();

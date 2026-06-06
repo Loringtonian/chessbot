@@ -105,6 +105,44 @@ def _rate_limited(ip: str) -> bool:
 GERMAN_MODEL = "gpt-realtime-2"
 GERMAN_VOICE = "marin"
 
+# Realtime voices accepted by gpt-realtime-2 (marin/cedar are the newest, most
+# natural; the rest are the classic set). Used to whitelist the client-supplied
+# voice so a bad value can't reach OpenAI. Keep in sync with the page's list.
+GERMAN_VOICES = ("marin", "cedar", "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse")
+
+# Output-speech speed (audio.output.speed): 1.0 is normal, 0.25 slowest, 1.5
+# fastest. Default a touch slow for learners — the primary user found 1.0 too
+# fast; she can nudge it on the page and the choice sticks (localStorage).
+DEFAULT_SPEED = 0.9
+SPEED_MIN, SPEED_MAX = 0.25, 1.5
+
+# Base turn-detection silence: how long after the student stops before the tutor
+# replies. The page can raise this (and drives a longer, context-aware pause
+# right after the tutor asks a question via session.update). Threshold/prefix
+# stay fixed — threshold 0.75 is the tuned echo-rejection value, not a UX knob.
+DEFAULT_SILENCE_MS = 800
+SILENCE_MIN_MS, SILENCE_MAX_MS = 200, 5000
+VAD_THRESHOLD = 0.75
+VAD_PREFIX_MS = 300
+
+
+def _clamp_voice(voice: Optional[str]) -> str:
+    return voice if (voice in GERMAN_VOICES) else GERMAN_VOICE
+
+
+def _clamp_speed(speed: Any) -> float:
+    try:
+        return max(SPEED_MIN, min(SPEED_MAX, float(speed)))
+    except (TypeError, ValueError):
+        return DEFAULT_SPEED
+
+
+def _clamp_silence(silence_ms: Any) -> int:
+    try:
+        return max(SILENCE_MIN_MS, min(SILENCE_MAX_MS, int(silence_ms)))
+    except (TypeError, ValueError):
+        return DEFAULT_SILENCE_MS
+
 GERMAN_PAGE = Path(__file__).parent.parent.parent / "german" / "index.html"
 
 
@@ -138,6 +176,8 @@ class CreateSessionResponse(BaseModel):
     expires_at: Optional[int] = None
     model: str
     voice: str
+    speed: Optional[float] = None
+    silence_ms: Optional[int] = None
 
 
 class LoginRequest(BaseModel):
@@ -164,11 +204,23 @@ async def german_login(req: LoginRequest, request: Request) -> LoginResponse:
 MAX_INSTRUCTIONS = 8000
 
 
-def build_session_config(instructions: Optional[str] = None) -> dict[str, Any]:
+def build_session_config(
+    instructions: Optional[str] = None,
+    voice: Optional[str] = None,
+    silence_ms: Any = None,
+) -> dict[str, Any]:
     """Build the OpenAI Realtime session config for the German tutor.
 
     `instructions` lets the signed-in user override the system prompt from the
-    page; falls back to the default tutor prompt when empty.
+    page; falls back to the default tutor prompt when empty. `voice` and
+    `silence_ms` come from the page's settings panel and are clamped /
+    whitelisted here so a bad client value can never reach OpenAI.
+
+    Note: `speed` (audio.output.speed) is deliberately NOT set here. It is
+    confirmed valid in session.update but unverified at session-create, and a
+    rejected create would 502 the whole connection. The page applies speed via
+    session.update on data-channel open instead — so create only ever carries
+    fields proven to work (voice + turn_detection were in the original config).
     """
     prompt = (instructions or "").strip()[:MAX_INSTRUCTIONS] or GERMAN_TUTOR_INSTRUCTIONS
     return {
@@ -184,8 +236,6 @@ def build_session_config(instructions: Optional[str] = None) -> dict[str, Any]:
                 # detection:
                 #  - far_field noise reduction filters the mic audio BEFORE VAD
                 #    (laptop/built-in mic profile), cutting false positives.
-                #  - semantic_vad uses a model to decide the student actually
-                #    finished a turn, so stray echo fragments don't interrupt.
                 "noise_reduction": {"type": "far_field"},
                 "turn_detection": {
                     "type": "server_vad",
@@ -194,9 +244,11 @@ def build_session_config(instructions: Optional[str] = None) -> dict[str, Any]:
                     # real room: 0.75 rejects the residual while real speech
                     # (much louder, AGC-boosted) still opens a turn. Keeps
                     # hands-free barge-in without the tutor interrupting herself.
-                    "threshold": 0.75,
-                    "prefix_padding_ms": 300,
-                    "silence_duration_ms": 700,
+                    "threshold": VAD_THRESHOLD,
+                    "prefix_padding_ms": VAD_PREFIX_MS,
+                    # Base wait; the page raises this right after the tutor asks
+                    # a question (context-aware patience) via session.update.
+                    "silence_duration_ms": _clamp_silence(silence_ms),
                     "interrupt_response": True,
                 },
                 "transcription": {
@@ -204,7 +256,8 @@ def build_session_config(instructions: Optional[str] = None) -> dict[str, Any]:
                     "language": "de",
                 },
             },
-            "output": {"voice": GERMAN_VOICE},
+            # speed is applied client-side via session.update (see docstring).
+            "output": {"voice": _clamp_voice(voice)},
         },
     }
 
@@ -243,9 +296,14 @@ async def create_german_session(request: Request) -> CreateSessionResponse:
         body = await request.json()
     except Exception:
         body = {}
-    instructions = (body or {}).get("instructions")
+    body = body or {}
+    instructions = body.get("instructions")
+    voice = body.get("voice")
+    speed = body.get("speed")
+    silence_ms = body.get("silence_ms")
 
-    request_body = {"session": build_session_config(instructions)}
+    config = build_session_config(instructions, voice, silence_ms)
+    request_body = {"session": config}
 
     try:
         async with httpx.AsyncClient() as client:
@@ -269,12 +327,15 @@ async def create_german_session(request: Request) -> CreateSessionResponse:
         raise HTTPException(status_code=500, detail=f"Failed to create session: {e}")
 
     session_data = data.get("session", {})
+    out_audio = config["audio"]
     return CreateSessionResponse(
         client_secret=data.get("value", ""),
         session_id=session_data.get("id", ""),
         expires_at=data.get("expires_at"),
         model=session_data.get("model", GERMAN_MODEL),
-        voice=session_data.get("audio", {}).get("output", {}).get("voice", GERMAN_VOICE),
+        voice=out_audio["output"]["voice"],
+        speed=_clamp_speed(speed),  # echo only; applied client-side via session.update
+        silence_ms=out_audio["input"]["turn_detection"]["silence_duration_ms"],
     )
 
 
