@@ -28,8 +28,10 @@ class Settings(BaseSettings):
     claude_max_tokens: int = 1024
     claude_max_tokens_analysis: int = 2048  # Opus can generate longer analysis
 
-    # OpenAI Realtime Voice settings
-    openai_realtime_model: str = "gpt-realtime"
+    # OpenAI Live voice settings (full-duplex GPT-Live)
+    openai_realtime_model: str = "gpt-live-1"
+    # Responses model the Live session delegates reasoning + Stockfish tool calls to
+    openai_live_backend_model: str = "gpt-5.5"
     openai_voice: str = "ash"
 
     # Server settings

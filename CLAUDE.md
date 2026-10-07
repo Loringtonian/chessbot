@@ -39,7 +39,7 @@ The LLM's role is **interpretation and teaching**, not analysis. It receives pre
 ### Services
 - `backend/app/services/coach_service.py` - Orchestrates Stockfish + Claude
 - `backend/app/services/claude_service.py` - Claude API integration (text)
-- `backend/app/services/openai_realtime_service.py` - OpenAI Voice API (WebRTC)
+- `backend/app/services/openai_realtime_service.py` - OpenAI Live voice API (GPT-Live-1, WebRTC)
 - `backend/app/services/stockfish_service.py` - Stockfish engine wrapper
 
 ### Models
@@ -49,7 +49,7 @@ The LLM's role is **interpretation and teaching**, not analysis. It receives pre
 ## Models Used
 
 - **Text Chat:** Claude Sonnet 4 (`claude-sonnet-4-20250514`)
-- **Voice Chat:** GPT-4o Realtime (`gpt-realtime`)
+- **Voice Chat:** GPT-Live-1 (`gpt-live-1`, full-duplex) delegating to a Responses backend (`gpt-5.5`) for Stockfish tool calls
 - **Chess Engine:** Stockfish (bundled binary)
 
 ## Testing Chess Coach Quality

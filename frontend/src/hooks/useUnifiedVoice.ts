@@ -1,6 +1,11 @@
 /**
- * Hook for managing WebRTC voice connection.
+ * Hook for managing the WebRTC voice connection to OpenAI's GPT-Live model.
  * Messages are managed externally via callbacks.
+ *
+ * GPT-Live is full-duplex: it listens while it speaks and handles interruptions
+ * itself, so there is no turn detection or response.create/cancel for speech.
+ * Chess questions are delegated to a Responses backend (configured server-side)
+ * whose Stockfish function calls arrive here as nested `response.event`s.
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
@@ -27,15 +32,34 @@ export interface UseUnifiedVoiceReturn {
   injectInterjection: (message: string) => void;
 }
 
-interface RealtimeEvent {
+interface LiveEvent {
   type: string;
   [key: string]: unknown;
+}
+
+interface FunctionCallItem {
+  type: string;
+  call_id: string;
+  name: string;
+  arguments: string;
 }
 
 let messageIdCounter = 0;
 
 function generateId(): string {
   return `voice_${Date.now()}_${++messageIdCounter}`;
+}
+
+// Live transcripts arrive as deltas with no "done" event, so a turn is
+// considered finished after this much quiet (or when the other side speaks).
+const USER_TURN_GAP_MS = 1200;
+const ASSISTANT_TURN_GAP_MS = 1500;
+
+// session.thinking.append / commentary.append accept at most 500 tokens.
+const MAX_CONTEXT_CHARS = 1500;
+
+function truncate(text: string): string {
+  return text.length > MAX_CONTEXT_CHARS ? `${text.slice(0, MAX_CONTEXT_CHARS)}…` : text;
 }
 
 interface UseUnifiedVoiceOptions {
@@ -53,10 +77,17 @@ export function useUnifiedVoice({ onMessage }: UseUnifiedVoiceOptions): UseUnifi
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const sessionIdRef = useRef<string>('');
+  const sessionStartedRef = useRef(false);
   const currentFenRef = useRef<string>('');
   const currentHistoryRef = useRef<string[]>([]);
-  const currentAssistantTranscriptRef = useRef<string>('');
+  const userTranscriptRef = useRef<string>('');
+  const assistantTranscriptRef = useRef<string>('');
+  const userTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const assistantTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handledCallIdsRef = useRef<Set<string>>(new Set());
   const onMessageRef = useRef(onMessage);
+  const shouldGreetRef = useRef(false);
 
   // Keep onMessage ref updated
   useEffect(() => {
@@ -71,161 +102,155 @@ export function useUnifiedVoice({ onMessage }: UseUnifiedVoiceOptions): UseUnifi
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleRealtimeEvent = useCallback(async (event: RealtimeEvent) => {
-    console.log('[Realtime Event]', event.type, event);
+  const sendEvent = useCallback((event: Record<string, unknown>) => {
+    // Live rejects commands sent before session.started
+    if (dataChannelRef.current?.readyState === 'open' && sessionStartedRef.current) {
+      dataChannelRef.current.send(JSON.stringify(event));
+      return true;
+    }
+    return false;
+  }, []);
+
+  const flushUserTranscript = useCallback(() => {
+    if (userTimerRef.current) {
+      clearTimeout(userTimerRef.current);
+      userTimerRef.current = null;
+    }
+    const text = userTranscriptRef.current.trim();
+    userTranscriptRef.current = '';
+    if (text) {
+      onMessageRef.current({
+        id: generateId(),
+        role: 'user',
+        content: text,
+        timestamp: new Date(),
+        source: 'voice',
+      });
+    }
+  }, []);
+
+  const flushAssistantTranscript = useCallback(() => {
+    if (assistantTimerRef.current) {
+      clearTimeout(assistantTimerRef.current);
+      assistantTimerRef.current = null;
+    }
+    const text = assistantTranscriptRef.current.trim();
+    assistantTranscriptRef.current = '';
+    setTranscript('');
+    if (text) {
+      onMessageRef.current({
+        id: generateId(),
+        role: 'assistant',
+        content: text,
+        timestamp: new Date(),
+        source: 'voice',
+      });
+    }
+  }, []);
+
+  const handleFunctionCall = useCallback(async (item: FunctionCallItem) => {
+    if (handledCallIdsRef.current.has(item.call_id)) return;
+    handledCallIdsRef.current.add(item.call_id);
+
+    let output: unknown;
+    try {
+      const args = JSON.parse(item.arguments || '{}');
+      // Always analyze the board the user is looking at; the backend model
+      // never transcribes a FEN itself.
+      args.fen = currentFenRef.current;
+      console.log(`Function call: ${item.name}`, args);
+      const result = await executeFunctionCall(sessionIdRef.current, item.name, args);
+      output = result.result;
+    } catch (err) {
+      console.error('Function call failed:', err);
+      output = { error: 'Function call failed' };
+    }
+
+    sendEvent({
+      type: 'response.item.create',
+      item: {
+        type: 'function_call_output',
+        call_id: item.call_id,
+        output: JSON.stringify(output),
+      },
+    });
+    // Continue the delegated response that is waiting on this tool result
+    sendEvent({ type: 'response.create' });
+  }, [sendEvent]);
+
+  const handleLiveEvent = useCallback((event: LiveEvent) => {
+    console.log('[Live Event]', event.type, event);
 
     switch (event.type) {
-      case 'session.created':
-      case 'session.updated':
-        console.log('Session configured:', event);
+      case 'session.started':
+        sessionStartedRef.current = true;
+        setConnectionStatus('connected');
+        setActivityStatus('idle');
+        // Trigger the initial greeting only if starting fresh
+        if (shouldGreetRef.current) {
+          sendEvent({
+            type: 'session.commentary.append',
+            content: 'The user just connected. Say only "Hello?" and wait for them to speak.',
+            delegation_id: null,
+          });
+        }
         break;
 
-      case 'input_audio_buffer.speech_started':
+      case 'session.input_transcript.delta': {
+        // User started talking over the coach: close out the coach's turn
+        if (assistantTranscriptRef.current) {
+          flushAssistantTranscript();
+        }
+        userTranscriptRef.current += (event.delta as string) || '';
         setActivityStatus('listening');
+        if (userTimerRef.current) clearTimeout(userTimerRef.current);
+        userTimerRef.current = setTimeout(flushUserTranscript, USER_TURN_GAP_MS);
         break;
+      }
 
-      case 'input_audio_buffer.speech_stopped':
-        setActivityStatus('processing');
-        break;
-
-      case 'response.created':
-        setActivityStatus('processing');
-        currentAssistantTranscriptRef.current = '';
-        break;
-
-      case 'response.output_item.added':
-        break;
-
-      // GA API event names
-      case 'response.output_audio_transcript.delta':
-      case 'response.audio_transcript.delta':
-        const delta = event.delta as string || '';
-        currentAssistantTranscriptRef.current += delta;
-        setTranscript(currentAssistantTranscriptRef.current);
+      case 'session.output_transcript.delta': {
+        if (userTranscriptRef.current) {
+          flushUserTranscript();
+        }
+        assistantTranscriptRef.current += (event.delta as string) || '';
+        setTranscript(assistantTranscriptRef.current);
         setActivityStatus('speaking');
+        if (assistantTimerRef.current) clearTimeout(assistantTimerRef.current);
+        assistantTimerRef.current = setTimeout(() => {
+          flushAssistantTranscript();
+          setActivityStatus('idle');
+        }, ASSISTANT_TURN_GAP_MS);
+        break;
+      }
+
+      case 'session.delegation.created':
+        flushUserTranscript();
+        setActivityStatus('processing');
         break;
 
-      case 'response.output_audio_transcript.done':
-      case 'response.audio_transcript.done':
-        const assistantTranscript = (event.transcript as string) || currentAssistantTranscriptRef.current;
-        console.log('[Assistant transcript done]', assistantTranscript);
-        if (assistantTranscript && assistantTranscript.trim()) {
-          onMessageRef.current({
-            id: generateId(),
-            role: 'assistant',
-            content: assistantTranscript.trim(),
-            timestamp: new Date(),
-            source: 'voice',
-          });
-        }
-        setTranscript('');
-        currentAssistantTranscriptRef.current = '';
-        break;
-
-      case 'response.output_text.delta':
-      case 'response.text.delta':
-        const textDelta = (event.delta as string) || (event.text as string) || '';
-        if (textDelta) {
-          currentAssistantTranscriptRef.current += textDelta;
-          setTranscript(currentAssistantTranscriptRef.current);
-          setActivityStatus('speaking');
+      case 'response.event': {
+        // Nested Responses API streaming event from the delegated backend
+        const inner = event.event as { type?: string; item?: FunctionCallItem } | undefined;
+        if (inner?.type === 'response.output_item.done' && inner.item?.type === 'function_call') {
+          void handleFunctionCall(inner.item);
         }
         break;
+      }
 
-      case 'response.output_text.done':
-      case 'response.text.done':
-        const textContent = (event.text as string) || (event.transcript as string) || currentAssistantTranscriptRef.current;
-        console.log('[Text content done]', textContent);
-        if (textContent && textContent.trim()) {
-          onMessageRef.current({
-            id: generateId(),
-            role: 'assistant',
-            content: textContent.trim(),
-            timestamp: new Date(),
-            source: 'voice',
-          });
-        }
-        setTranscript('');
-        currentAssistantTranscriptRef.current = '';
-        break;
-
-      case 'response.done':
+      case 'session.closed':
+        setConnectionStatus('disconnected');
         setActivityStatus('idle');
         break;
 
-      case 'conversation.item.input_audio_transcription.completed':
-        const userTranscript = event.transcript as string;
-        console.log('[User transcript completed]', userTranscript);
-        if (userTranscript && userTranscript.trim()) {
-          onMessageRef.current({
-            id: generateId(),
-            role: 'user',
-            content: userTranscript.trim(),
-            timestamp: new Date(),
-            source: 'voice',
-          });
-        }
-        break;
-
-      case 'conversation.item.input_audio_transcription.delta':
-        console.log('[User transcript delta]', event.delta);
-        break;
-
-      case 'response.function_call_arguments.done':
-        await handleFunctionCall(event);
-        break;
-
       case 'error':
-        console.error('Realtime API error:', event);
+        console.error('Live API error:', event);
         setConnectionError((event.error as { message?: string })?.message || 'Unknown error');
         break;
 
       default:
-        console.log('Unhandled event:', event.type, event);
+        break;
     }
-  }, []);
-
-  const handleFunctionCall = useCallback(async (event: RealtimeEvent) => {
-    const callId = event.call_id as string;
-    const name = event.name as string;
-    const args = JSON.parse(event.arguments as string || '{}');
-
-    console.log(`Function call: ${name}`, args);
-
-    try {
-      const result = await executeFunctionCall(sessionId || '', name, args);
-
-      if (dataChannelRef.current?.readyState === 'open') {
-        dataChannelRef.current.send(JSON.stringify({
-          type: 'conversation.item.create',
-          item: {
-            type: 'function_call_output',
-            call_id: callId,
-            output: JSON.stringify(result.result),
-          },
-        }));
-
-        dataChannelRef.current.send(JSON.stringify({
-          type: 'response.create',
-        }));
-      }
-    } catch (err) {
-      console.error('Function call failed:', err);
-
-      if (dataChannelRef.current?.readyState === 'open') {
-        dataChannelRef.current.send(JSON.stringify({
-          type: 'conversation.item.create',
-          item: {
-            type: 'function_call_output',
-            call_id: callId,
-            output: JSON.stringify({ error: 'Function call failed' }),
-          },
-        }));
-      }
-    }
-  }, [sessionId]);
-
-  const shouldGreetRef = useRef(false);
+  }, [sendEvent, handleFunctionCall, flushUserTranscript, flushAssistantTranscript]);
 
   const connect = useCallback(async (fen: string, moveHistory?: string[], _currentPly?: number, shouldGreet?: boolean) => {
     shouldGreetRef.current = shouldGreet ?? false;
@@ -237,13 +262,10 @@ export function useUnifiedVoice({ onMessage }: UseUnifiedVoiceOptions): UseUnifi
     setConnectionError(null);
     currentFenRef.current = fen;
     currentHistoryRef.current = moveHistory || [];
+    sessionStartedRef.current = false;
+    handledCallIdsRef.current = new Set();
 
     try {
-      // If we shouldn't greet, it means there's existing conversation history
-      const hasConversationHistory = !shouldGreetRef.current;
-      const session = await createVoiceSession(fen, moveHistory, hasConversationHistory);
-      setSessionId(session.session_id);
-
       const pc = new RTCPeerConnection();
       peerConnectionRef.current = pc;
 
@@ -258,16 +280,8 @@ export function useUnifiedVoice({ onMessage }: UseUnifiedVoiceOptions): UseUnifi
       dataChannelRef.current = dc;
 
       dc.onopen = () => {
+        // Commands must wait for session.started (see handleLiveEvent)
         console.log('Data channel open');
-        setConnectionStatus('connected');
-        setActivityStatus('idle');
-
-        // Trigger initial greeting from the coach only if starting fresh
-        if (shouldGreetRef.current) {
-          dc.send(JSON.stringify({
-            type: 'response.create',
-          }));
-        }
       };
 
       dc.onclose = () => {
@@ -278,8 +292,7 @@ export function useUnifiedVoice({ onMessage }: UseUnifiedVoiceOptions): UseUnifi
 
       dc.onmessage = (event) => {
         try {
-          const realtimeEvent = JSON.parse(event.data);
-          handleRealtimeEvent(realtimeEvent);
+          handleLiveEvent(JSON.parse(event.data));
         } catch (err) {
           console.error('Failed to parse event:', err);
         }
@@ -314,22 +327,13 @@ export function useUnifiedVoice({ onMessage }: UseUnifiedVoiceOptions): UseUnifi
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
-      const model = session.model || 'gpt-realtime';
-      const response = await fetch(`https://api.openai.com/v1/realtime/calls?model=${model}`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${session.client_secret}`,
-          'Content-Type': 'application/sdp',
-        },
-        body: offer.sdp,
-      });
+      // The backend exchanges the offer with OpenAI (POST /v1/live/sessions)
+      const hasConversationHistory = !shouldGreetRef.current;
+      const session = await createVoiceSession(offer.sdp || '', fen, moveHistory, hasConversationHistory);
+      sessionIdRef.current = session.session_id;
+      setSessionId(session.session_id);
 
-      if (!response.ok) {
-        throw new Error(`SDP exchange failed: ${response.status}`);
-      }
-
-      const answerSdp = await response.text();
-      await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+      await pc.setRemoteDescription({ type: 'answer', sdp: session.sdp });
 
     } catch (err) {
       console.error('Failed to connect:', err);
@@ -337,18 +341,30 @@ export function useUnifiedVoice({ onMessage }: UseUnifiedVoiceOptions): UseUnifi
       setConnectionError(err instanceof Error ? err.message : 'Connection failed');
       disconnect();
     }
-  }, [connectionStatus, handleRealtimeEvent]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectionStatus, handleLiveEvent]);
 
   const disconnect = useCallback(() => {
+    if (userTimerRef.current) clearTimeout(userTimerRef.current);
+    if (assistantTimerRef.current) clearTimeout(assistantTimerRef.current);
+    userTimerRef.current = null;
+    assistantTimerRef.current = null;
+    userTranscriptRef.current = '';
+    assistantTranscriptRef.current = '';
+
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => track.stop());
       localStreamRef.current = null;
     }
 
     if (dataChannelRef.current) {
+      if (dataChannelRef.current.readyState === 'open' && sessionStartedRef.current) {
+        dataChannelRef.current.send(JSON.stringify({ type: 'session.close' }));
+      }
       dataChannelRef.current.close();
       dataChannelRef.current = null;
     }
+    sessionStartedRef.current = false;
 
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close();
@@ -363,6 +379,7 @@ export function useUnifiedVoice({ onMessage }: UseUnifiedVoiceOptions): UseUnifi
 
     setConnectionStatus('disconnected');
     setActivityStatus('idle');
+    sessionIdRef.current = '';
     setSessionId(null);
     setTranscript('');
   }, []);
@@ -371,82 +388,49 @@ export function useUnifiedVoice({ onMessage }: UseUnifiedVoiceOptions): UseUnifi
     currentFenRef.current = fen;
     currentHistoryRef.current = moveHistory || [];
 
-    if (dataChannelRef.current?.readyState === 'open') {
-      const history = moveHistory || [];
-      const movesStr = history.length > 0
-        ? history.map((m, i) => i % 2 === 0 ? `${Math.floor(i/2) + 1}. ${m}` : m).join(' ')
-        : 'none';
+    const history = moveHistory || [];
+    const movesStr = history.length > 0
+      ? history.map((m, i) => i % 2 === 0 ? `${Math.floor(i/2) + 1}. ${m}` : m).join(' ')
+      : 'none';
 
-      let contextText = `[Position updated: FEN=${fen}, Moves: ${movesStr}]`;
-      if (currentPly !== undefined && history.length > 0) {
-        contextText = `[Position: FEN=${fen}, Game (${history.length} moves): ${movesStr}, Viewing move ${currentPly}]`;
-      }
-
-      dataChannelRef.current.send(JSON.stringify({
-        type: 'conversation.item.create',
-        item: {
-          type: 'message',
-          role: 'system',
-          content: [{
-            type: 'input_text',
-            text: contextText,
-          }],
-        },
-      }));
+    let contextText = `[Position updated: FEN=${fen}, Moves: ${movesStr}]`;
+    if (currentPly !== undefined && history.length > 0) {
+      contextText = `[Position: FEN=${fen}, Game (${history.length} moves): ${movesStr}, Viewing move ${currentPly}]`;
     }
-  }, []);
+
+    // Silent context: informs later speech without prompting the coach to talk
+    sendEvent({
+      type: 'session.thinking.append',
+      content: truncate(contextText),
+      delegation_id: null,
+    });
+  }, [sendEvent]);
 
   const interruptResponse = useCallback(() => {
-    if (dataChannelRef.current?.readyState === 'open') {
-      dataChannelRef.current.send(JSON.stringify({
-        type: 'response.cancel',
-      }));
-    }
+    // GPT-Live is full-duplex and yields when the user talks over it, so there
+    // is no explicit cancel command; just reset the local UI state.
+    flushAssistantTranscript();
     setActivityStatus('idle');
-    setTranscript('');
-  }, []);
+  }, [flushAssistantTranscript]);
 
-  // Inject a text message into the voice session for context
+  // Share text-chat messages with the voice session as silent context
   const injectTextMessage = useCallback((message: UnifiedMessage) => {
-    if (dataChannelRef.current?.readyState === 'open') {
-      // Use input_text for user messages, output_text for assistant messages
-      const contentType = message.role === 'user' ? 'input_text' : 'output_text';
-      dataChannelRef.current.send(JSON.stringify({
-        type: 'conversation.item.create',
-        item: {
-          type: 'message',
-          role: message.role,
-          content: [{
-            type: contentType,
-            text: `[From text chat] ${message.content}`,
-          }],
-        },
-      }));
-    }
-  }, []);
+    const speaker = message.role === 'user' ? 'User' : 'Coach';
+    sendEvent({
+      type: 'session.thinking.append',
+      content: truncate(`[From text chat] ${speaker}: ${message.content}`),
+      delegation_id: null,
+    });
+  }, [sendEvent]);
 
-  // Inject a coaching interjection that triggers voice output
+  // Inject a coaching interjection that the voice should say out loud
   const injectInterjection = useCallback((message: string) => {
-    if (dataChannelRef.current?.readyState === 'open') {
-      // Add as a system instruction that tells the voice to speak this
-      dataChannelRef.current.send(JSON.stringify({
-        type: 'conversation.item.create',
-        item: {
-          type: 'message',
-          role: 'user',
-          content: [{
-            type: 'input_text',
-            text: `[Coach interjection - speak this naturally] ${message}`,
-          }],
-        },
-      }));
-
-      // Trigger immediate response so the voice speaks
-      dataChannelRef.current.send(JSON.stringify({
-        type: 'response.create',
-      }));
-    }
-  }, []);
+    sendEvent({
+      type: 'session.commentary.append',
+      content: truncate(`Coach interjection - tell the user this naturally: ${message}`),
+      delegation_id: null,
+    });
+  }, [sendEvent]);
 
   return {
     connectionStatus,

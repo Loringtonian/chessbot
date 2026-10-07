@@ -1,5 +1,5 @@
 /**
- * API client for OpenAI Realtime Voice API endpoints.
+ * API client for the OpenAI Live (GPT-Live) voice endpoints.
  */
 
 import type { CreateSessionResponse, FunctionCallResult } from '../types/chess';
@@ -8,9 +8,11 @@ const API_BASE = import.meta.env.VITE_API_URL || '';
 
 /**
  * Create a new voice coaching session.
- * Returns an ephemeral client secret for WebRTC connection.
+ * The backend exchanges our WebRTC SDP offer with OpenAI and returns the answer,
+ * so the API key never reaches the browser.
  */
 export async function createVoiceSession(
+  sdp: string,
   fen: string,
   moveHistory?: string[],
   hasConversationHistory?: boolean
@@ -21,6 +23,7 @@ export async function createVoiceSession(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
+      sdp,
       fen,
       move_history: moveHistory,
       has_conversation_history: hasConversationHistory ?? false,

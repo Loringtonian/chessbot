@@ -1,4 +1,4 @@
-"""OpenAI Realtime Voice API service for voice-based chess coaching."""
+"""OpenAI Live (GPT-Live) voice service for voice-based chess coaching."""
 
 import httpx
 from typing import Any, Optional
@@ -30,58 +30,58 @@ def fen_to_ascii_board(fen: str) -> str:
     return "\n".join(lines)
 
 
-# Chess coaching system instructions for voice - fresh session
-VOICE_COACH_INSTRUCTIONS_FRESH = """You are a chess coach. The user is looking at a chess board.
+# GPT-Live is a full-duplex "frontend" voice model: it handles the conversation
+# (listening while speaking, interruptions, backchannels) and delegates real work
+# to a Responses backend model that owns the Stockfish tools. Frontend
+# instructions cover voice + when to delegate; backend instructions cover the
+# chess rules. Both are immutable for the Live model after startup.
+
+_LIVE_VOICE_RULES = """Voice style:
+- Answer only what is asked, in 1-3 short spoken sentences.
+- No chit-chat and no follow-up questions.
+- Say moves naturally ("knight f3", "e4", "castles kingside").
+- Say evaluations in words ("slightly better for White", "winning", "mate in 3"), never as numbers like +0.3.
+
+Delegation - this is critical:
+- You cannot see the board and must never work out chess yourself.
+- Delegate EVERY question about the current position, a specific move, a plan, or a hint to your backend, then speak only what it returns.
+- While waiting, a brief "let me check" is fine; never guess piece locations or moves.
+- General chess knowledge (openings, history, principles) may be answered directly.
+
+Context notes about the board position or the text chat will arrive silently; use them, but do not read them aloud."""
+
+VOICE_COACH_INSTRUCTIONS_FRESH = f"""You are a friendly chess coach talking with the user by voice while they look at a chess board.
 
 When the session starts, say only "Hello?" and wait for the user to speak.
 
-CRITICAL RULES - FOLLOW EXACTLY:
-1. ONLY state facts from the analysis results you receive
-2. NEVER claim a piece is on a square unless stated in the analysis
-3. NEVER suggest moves not in the analysis results
-4. If asked about something not in the analysis, say you'd need to check
-5. Call get_position_analysis BEFORE answering ANY position question
+{_LIVE_VOICE_RULES}"""
 
-Response Rules:
-- Answer only what is asked. 1-3 sentences max.
-- No chit-chat, no follow-up questions.
-- Use algebraic notation (say "knight f3" or "Nf3").
+VOICE_COACH_INSTRUCTIONS_CONTINUING = f"""You are a friendly chess coach talking with the user by voice while they look at a chess board.
 
-Evaluations:
-- "slightly better for White" not "+0.3"
-- "winning" for 2+ pawn advantage
-- "mate in X" when applicable
+The user has been chatting with you by text and has now switched to voice.
+Context notes marked [From text chat] are from that conversation.
+Continue naturally from where it left off. Do NOT greet or introduce yourself.
 
-You have position analysis tools. Use them for accuracy - never guess piece positions."""
+{_LIVE_VOICE_RULES}"""
 
-# Chess coaching system instructions for voice - continuing conversation
-VOICE_COACH_INSTRUCTIONS_CONTINUING = """You are a chess coach. The user is looking at a chess board.
+# Backend (Responses) model instructions: this model runs the Stockfish tools.
+BACKEND_COACH_INSTRUCTIONS = """You are the analysis backend for a voice chess coach. A voice model delegates the user's questions to you and speaks your answer aloud.
 
-The user has been chatting with you via text and has now switched to voice mode.
-Messages marked [From text chat] are from the previous text conversation.
-Continue naturally from where the conversation left off. Do NOT greet or introduce yourself.
+The tools always analyze the position currently shown on the user's board; you do not need to supply a FEN.
 
 CRITICAL RULES - FOLLOW EXACTLY:
-1. ONLY state facts from the analysis results you receive
-2. NEVER claim a piece is on a square unless stated in the analysis
-3. NEVER suggest moves not in the analysis results
-4. If asked about something not in the analysis, say you'd need to check
-5. Call get_position_analysis BEFORE answering ANY position question
+1. Call get_position_analysis (or evaluate_move / get_hint) BEFORE answering ANY question about the position.
+2. ONLY state facts from the tool results.
+3. NEVER claim a piece is on a square unless the tool results say so.
+4. NEVER suggest moves that are not in the tool results.
+5. If something is not covered by the results, say you'd need to check.
 
-Response Rules:
-- Answer only what is asked. 1-3 sentences max.
-- No chit-chat, no follow-up questions.
-- Use algebraic notation (say "knight f3" or "Nf3").
-
-Evaluations:
-- "slightly better for White" not "+0.3"
-- "winning" for 2+ pawn advantage
-- "mate in X" when applicable
-
-You have position analysis tools. Use them for accuracy - never guess piece positions."""
+Reply with 1-3 short sentences in plain spoken English, ready to be read aloud: no markdown, no lists, no numeric evaluations. Use algebraic notation for moves."""
 
 
-# Function tool definitions for Stockfish integration
+# Function tool definitions for Stockfish integration.
+# The client fills in `fen` with the board the user is viewing when it executes
+# the call, so the backend model never has to transcribe (or hallucinate) a FEN.
 CHESS_TOOLS = [
     {
         "type": "function",
@@ -89,50 +89,52 @@ CHESS_TOOLS = [
         "description": "Get Stockfish analysis of the current chess position. Returns evaluation, best move, and top alternative moves with their evaluations. Call this before answering questions about what to play.",
         "parameters": {
             "type": "object",
-            "properties": {
-                "fen": {
-                    "type": "string",
-                    "description": "Position in FEN notation"
-                }
-            },
-            "required": ["fen"]
+            "properties": {},
+            "additionalProperties": False,
         }
     },
     {
         "type": "function",
         "name": "evaluate_move",
-        "description": "Evaluate a specific chess move. Returns how the move compares to the best move and the resulting position evaluation. Use when user asks about a specific move.",
+        "description": "Evaluate a specific chess move from the current position. Returns how the move compares to the best move and the resulting position evaluation. Use when user asks about a specific move.",
         "parameters": {
             "type": "object",
             "properties": {
-                "fen": {
-                    "type": "string",
-                    "description": "Position before the move in FEN notation"
-                },
                 "move": {
                     "type": "string",
                     "description": "Move in SAN notation (e.g., 'Nf3', 'e4', 'O-O')"
                 }
             },
-            "required": ["fen", "move"]
+            "required": ["move"],
+            "additionalProperties": False,
         }
     },
     {
         "type": "function",
         "name": "get_hint",
-        "description": "Get a strategic hint about the position without revealing the exact best move. Use when user wants help but wants to figure it out themselves.",
+        "description": "Get a strategic hint about the current position without revealing the exact best move. Use when user wants help but wants to figure it out themselves.",
         "parameters": {
             "type": "object",
-            "properties": {
-                "fen": {
-                    "type": "string",
-                    "description": "Position in FEN notation"
-                }
-            },
-            "required": ["fen"]
+            "properties": {},
+            "additionalProperties": False,
         }
     }
 ]
+
+
+def format_position_context(
+    fen: str,
+    move_history: Optional[list[str]] = None,
+) -> str:
+    """Describe the board for the Live model's silent context."""
+    text = f"Current position:\n{fen_to_ascii_board(fen)}\n\nFEN: {fen}"
+    if move_history:
+        moves_str = " ".join(
+            f"{i//2 + 1}.{m}" if i % 2 == 0 else m
+            for i, m in enumerate(move_history)
+        )
+        text += f"\nMoves played: {moves_str}"
+    return text
 
 
 class OpenAIRealtimeService:
@@ -159,54 +161,51 @@ class OpenAIRealtimeService:
 
     async def create_session(
         self,
+        sdp: str,
         fen: str,
         move_history: Optional[list[str]] = None,
         has_conversation_history: bool = False
     ) -> dict[str, Any]:
-        """Create an ephemeral session token for WebRTC connection.
+        """Create a GPT-Live WebRTC session from the browser's SDP offer.
+
+        The project API key never leaves the server: the browser posts its
+        offer here and receives only the SDP answer and session ID.
 
         Args:
+            sdp: The browser's WebRTC SDP offer.
             fen: Current chess position in FEN notation.
             move_history: List of moves played so far in SAN notation.
             has_conversation_history: Whether there's existing chat history.
 
         Returns:
-            Dict with client_secret, session_id, and expires_at.
+            Dict with session_id, sdp (the answer), model, and voice.
         """
         if not self._settings.openai_api_key:
             raise ValueError("OPENAI_API_KEY not configured")
 
-        # Build session configuration
         session_config = self.build_session_config(fen, move_history, has_conversation_history)
-
-        # Wrap in session object as required by GA API
-        request_body = {
-            "session": session_config
-        }
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                "https://api.openai.com/v1/realtime/client_secrets",
+                "https://api.openai.com/v1/live/sessions",
                 headers={
                     "Authorization": f"Bearer {self._settings.openai_api_key}",
                     "Content-Type": "application/json"
                 },
-                json=request_body,
+                json={
+                    "session": session_config,
+                    "transport": {"type": "webrtc", "sdp": sdp},
+                },
                 timeout=30.0
             )
             response.raise_for_status()
             data = response.json()
 
-            # GA API returns ephemeral key as "value" at top level
-            client_secret = data.get("value")
-            session_data = data.get("session", {})
-
             return {
-                "client_secret": client_secret,
-                "session_id": session_data.get("id", ""),
-                "expires_at": data.get("expires_at"),
-                "model": session_data.get("model", self._settings.openai_realtime_model),
-                "voice": session_data.get("audio", {}).get("output", {}).get("voice", self._settings.openai_voice)
+                "session_id": data["session"]["id"],
+                "sdp": data["transport"]["sdp"],
+                "model": session_config["model"],
+                "voice": session_config["audio"]["output"]["voice"],
             }
 
     def build_session_config(
@@ -215,7 +214,7 @@ class OpenAIRealtimeService:
         move_history: Optional[list[str]] = None,
         has_conversation_history: bool = False
     ) -> dict[str, Any]:
-        """Build the session configuration for OpenAI Realtime API.
+        """Build the GPT-Live session configuration.
 
         Args:
             fen: Current chess position in FEN notation.
@@ -225,47 +224,45 @@ class OpenAIRealtimeService:
         Returns:
             Session configuration dict.
         """
-        # Use different instructions based on whether there's existing conversation
         instructions = (
             VOICE_COACH_INSTRUCTIONS_CONTINUING if has_conversation_history
             else VOICE_COACH_INSTRUCTIONS_FRESH
         )
 
-        # Add current position context with ASCII board
-        if fen:
-            ascii_board = fen_to_ascii_board(fen)
-            instructions += f"\n\nCurrent position:\n{ascii_board}\n\nFEN: {fen}"
-        if move_history:
-            moves_str = " ".join(
-                f"{i//2 + 1}.{' ' if i % 2 == 0 else ''}{m}"
-                if i % 2 == 0 else m
-                for i, m in enumerate(move_history)
-            )
-            instructions += f"\nMoves played: {moves_str}"
-
-        return {
-            "type": "realtime",
+        config: dict[str, Any] = {
             "model": self._settings.openai_realtime_model,
             "instructions": instructions,
-            "output_modalities": ["audio"],
-            "tools": CHESS_TOOLS,
             "audio": {
-                "input": {
-                    "turn_detection": {
-                        "type": "server_vad",
-                        "threshold": 0.7,
-                        "prefix_padding_ms": 500,
-                        "silence_duration_ms": 800
-                    },
-                    "transcription": {
-                        "model": "gpt-4o-transcribe"
-                    }
-                },
                 "output": {
                     "voice": self._settings.openai_voice
                 }
-            }
+            },
+            "delegation": {
+                "type": "responses",
+                "responses": {
+                    "model": self._settings.openai_live_backend_model,
+                    "instructions": BACKEND_COACH_INSTRUCTIONS,
+                    "tools": CHESS_TOOLS,
+                    # One Stockfish call at a time keeps the client tool loop simple
+                    "parallel_tool_calls": False,
+                    "reasoning": {"effort": "low"},
+                    "text": {"verbosity": "low"},
+                },
+            },
         }
+
+        # Starting position as initial developer context for the Live model
+        if fen:
+            config["input"] = [{
+                "type": "message",
+                "role": "developer",
+                "content": [{
+                    "type": "input_text",
+                    "text": format_position_context(fen, move_history),
+                }],
+            }]
+
+        return config
 
     def execute_function_call(
         self,

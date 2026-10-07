@@ -1,5 +1,6 @@
-"""OpenAI Realtime Voice API routes."""
+"""OpenAI Live (GPT-Live) voice API routes."""
 
+import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Any, Optional
@@ -11,17 +12,17 @@ router = APIRouter(prefix="/api/realtime", tags=["realtime"])
 
 
 class CreateSessionRequest(BaseModel):
-    """Request to create a new voice session."""
+    """Request to create a new voice session from the browser's WebRTC offer."""
+    sdp: str
     fen: str
     move_history: Optional[list[str]] = None
     has_conversation_history: bool = False
 
 
 class CreateSessionResponse(BaseModel):
-    """Response with ephemeral session token."""
-    client_secret: str
+    """Response with the Live session ID and WebRTC SDP answer."""
     session_id: str
-    expires_at: Optional[int] = None
+    sdp: str
     model: str
     voice: str
 
@@ -49,17 +50,23 @@ class UpdateContextRequest(BaseModel):
 async def create_session(request: CreateSessionRequest) -> CreateSessionResponse:
     """Create a new voice coaching session.
 
-    Returns an ephemeral client secret that can be used to establish
-    a WebRTC connection to OpenAI's Realtime API.
+    Exchanges the browser's SDP offer for an answer with OpenAI's Live API
+    (POST /v1/live/sessions), keeping the API key server-side.
     """
     try:
         service = get_openai_realtime_service()
         result = await service.create_session(
+            sdp=request.sdp,
             fen=request.fen,
             move_history=request.move_history,
             has_conversation_history=request.has_conversation_history
         )
         return CreateSessionResponse(**result)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"OpenAI Live session creation failed ({e.response.status_code}): {e.response.text}"
+        )
     except ValueError as e:
         raise HTTPException(
             status_code=400,
@@ -117,7 +124,7 @@ async def update_context(request: UpdateContextRequest) -> dict[str, str]:
 
 @router.get("/health")
 async def realtime_health() -> dict[str, Any]:
-    """Check if OpenAI Realtime API is configured."""
+    """Check if the OpenAI Live voice API is configured."""
     from ...config import get_settings
     settings = get_settings()
 

@@ -107,9 +107,9 @@ export type VoiceActivityStatus =
   | 'speaking';
 
 export interface CreateSessionResponse {
-  client_secret: string;
   session_id: string;
-  expires_at?: number;
+  /** WebRTC SDP answer from OpenAI's Live API */
+  sdp: string;
   model: string;
   voice: string;
 }
